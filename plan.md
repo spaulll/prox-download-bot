@@ -36,12 +36,12 @@ Work in phases. Update todos after every task. Short keyword-style commits.
 **Goal:** Project builds and runs cleanly with English UI/logs only.
 
 ### Todo
-- [ ] Fix imports / build after cleanup
-- [ ] Modernize / simplify config (`default.config.json`)
-- [ ] Verify Aria2 websocket control still works
-- [ ] Ensure all Telegram messages are English
-- [ ] Smoke test: start bot → add download → see status
-- [ ] Commit: `fix: english only base`
+- [x] Fix imports / build after cleanup
+- [x] Modernize / simplify config (`default.config.json`)
+- [x] Verify Aria2 websocket control still works
+- [x] Ensure all Telegram messages are English
+- [x] Smoke test: start bot → add download → see status
+- [x] Commit: `fix: english only base`
 
 ---
 
