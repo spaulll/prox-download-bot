@@ -144,14 +144,14 @@ Work in phases. Update todos after every task. Short keyword-style commits.
 **Goal:** Clean, attributed, production-ready.
 
 ### Todo
-- [ ] New English-only `README.md`
-- [ ] Proper credits section (Apache-2.0 compliant):
+- [x] New English-only `README.md`
+- [x] Proper credits section (Apache-2.0 compliant):
   - Original author: gaowanliang (Gaowan Liang)
   - Original repo link
   - Note that this is a heavy remod / derivative
-- [ ] Final config cleanup (AniList toggle, library paths, ytdlp defaults, etc.)
-- [ ] Progress bar consistency across all operations
-- [ ] Final commit: `docs: readme + credits` / `chore: release ready`
+- [x] Final config cleanup (AniList toggle, library paths, ytdlp defaults, etc.)
+- [x] Progress bar consistency across all operations
+- [x] Final commit: `docs: readme + credits` / `chore: release ready`
 
 ---
 
