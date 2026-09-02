@@ -4,7 +4,6 @@ import (
 	i18nLoc "DownloadBot/i18n"
 	"DownloadBot/internal/config"
 	"DownloadBot/internal/server/clientManage"
-	"DownloadBot/tool/controller"
 	"DownloadBot/tool/displayUtil/gotree"
 	"DownloadBot/tool/input"
 	"DownloadBot/tool/monitor"
@@ -15,7 +14,6 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -174,9 +172,6 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 
 	Keyboards = append(Keyboards, tgBotApi.NewKeyboardButtonRow(
 		tgBotApi.NewKeyboardButton(i18nLoc.LocText("removeDownloadFolderFiles")),
-	))
-	Keyboards = append(Keyboards, tgBotApi.NewKeyboardButtonRow(
-		tgBotApi.NewKeyboardButton(i18nLoc.LocText("uploadDownloadFolderFiles")),
 	))
 	Keyboards = append(Keyboards, tgBotApi.NewKeyboardButtonRow(
 		tgBotApi.NewKeyboardButton(i18nLoc.LocText("moveDownloadFolderFiles")),
@@ -367,53 +362,8 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 					FileControlChan <- "close"
 					go copyFilesPrint(update.Message.MessageID, bot)
 					FileControlChan <- "file"
-				case i18nLoc.LocText("uploadDownloadFolderFiles"):
-					isFileChanClean := false
-					for !isFileChanClean {
-						select {
-						case _ = <-FileControlChan:
-						default:
-							isFileChanClean = true
-						}
-					}
-					FileControlChan <- "close"
-					go uploadFiles(update.Message.MessageID, update.Message.Text, bot)
-					FileControlChan <- "upload"
 				default:
-					if strings.Contains(update.Message.Text, "localhost/onedrive-login") {
-						// OneDrive auth code link
-						controller.CreateDriveInfoFolder("./info/onedrive")
-						var re *regexp.Regexp
-						if len(update.Message.Text) > 100 {
-							re = regexp.MustCompile(`(?m)code=(.*?)&`)
-						} else {
-							re = regexp.MustCompile(`(?m)code=(.*?)`)
-						}
-						judgeLegal := re.FindStringSubmatch(update.Message.Text)
-						//log.Println(judgeLegal)
-						if len(judgeLegal) >= 2 {
-							isFileChanClean := false
-							for !isFileChanClean {
-								select {
-								case _ = <-FileControlChan:
-								default:
-									isFileChanClean = true
-								}
-							}
-							FileControlChan <- "close"
-							go uploadFiles(update.Message.MessageID, update.Message.Text, bot)
-							FileControlChan <- "onedrive~create"
-						} else {
-							msg.Text = i18nLoc.LocText("errorOneDriveAuthURL")
-						}
-
-					} else if strings.Contains(update.Message.Text, "4/1A") && len(update.Message.Text) == 62 {
-						// Google Drive auth code
-						controller.CreateDriveInfoFolder("./info/googleDrive")
-						FileControlChan <- "close"
-						go uploadFiles(update.Message.MessageID, update.Message.Text, bot)
-						FileControlChan <- "googleDrive~create"
-					} else if !input.ToolApp.Aria2.Download(update.Message.Text) {
+					if !input.ToolApp.Aria2.Download(update.Message.Text) {
 						msg.Text = i18nLoc.LocText("unknownLink")
 					}
 					if update.Message.Document != nil {

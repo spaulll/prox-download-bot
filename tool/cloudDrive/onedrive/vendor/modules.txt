@@ -1,3 +1,0 @@
-# github.com/buger/jsonparser v1.0.0
-## explicit
-github.com/buger/jsonparser
