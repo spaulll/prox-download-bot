@@ -51,21 +51,26 @@ func runArchivePipeline(bot *tgBotApi.BotAPI, chatID int64, org *organize.Organi
 
 	// "Extracting" live progress
 	var lastUpdate time.Time
-	progress := func(done, total int, current string) {
-		if total <= 0 {
-			return
-		}
+	progress := func(i extract.Info) {
 		if time.Since(lastUpdate) < time.Second {
 			return
 		}
 		lastUpdate = time.Now()
-		live.Update("🗂 Organizing...\n\n" +
+		lines := "🗂 Organizing...\n\n" +
 			"📦 Extracting\n" +
-			progressBar(done, total) + "\n" +
-			fmt.Sprintf("%d/%d files", done, total))
+			segmentBar(i.Percent)
+		if i.BytesTotal > 0 {
+			lines += "\n" + fmt.Sprintf("Extracted: %s of %s",
+				typeTrans.Byte2Readable(float64(i.BytesDone)),
+				typeTrans.Byte2Readable(float64(i.BytesTotal)))
+		}
+		if i.Total > 1 && i.Total != 100 {
+			lines += "\n" + fmt.Sprintf("%d/%d files", i.Done, i.Total)
+		}
+		live.Update(lines)
 	}
 
-	live.Update("🗂 Organizing...\n\n📦 Extracting\n" + progressBar(0, 1) + "\n0/1 files")
+	live.Update("🗂 Organizing...\n\n📦 Extracting\n" + segmentBar(0))
 	if err := ext.Extract(srcPath, stageDir, progress); err != nil {
 		logger.Error("extract failed for %s: %v", srcPath, err)
 		live.Update("🗂 Organizing...\n\n⚠️ Extraction failed\n" + err.Error())
@@ -113,7 +118,7 @@ func runArchivePipeline(bot *tgBotApi.BotAPI, chatID int64, org *organize.Organi
 				"🔍 Analyzing content\n" +
 				p.Detail + "\n\n" +
 				"📂 Moving files\n" +
-				progressBar(p.Done, p.Total) + "\n" +
+				segmentBarRatio(p.Done, p.Total) + "\n" +
 				fmt.Sprintf("%d/%d episodes", p.Done, p.Total))
 		})
 	case len(episodeFiles) == 1:
@@ -154,7 +159,11 @@ func runArchivePipeline(bot *tgBotApi.BotAPI, chatID int64, org *organize.Organi
 		org.MoveToArchives(srcPath)
 	}
 
-	res.SizeBytes = dirTreeSize(stageDir)
+	// organizer accumulates moved sizes; plain-archive branch moves the
+	// stage dir itself, so measure it there
+	if res.SizeBytes == 0 {
+		res.SizeBytes = dirTreeSize(stageDir)
+	}
 	res.Duration = time.Since(start)
 	sendArchiveSummary(bot, chatID, displayName, res)
 }

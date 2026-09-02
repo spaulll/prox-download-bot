@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -47,21 +48,33 @@ func (m *OrganizeProgressMsg) Update(text string) {
 	}
 }
 
-// progressBar renders the mandated style: ▰▰▰▰▰▰▰▱▱▱ 70%
-func progressBar(done, total int) string {
-	if total <= 0 {
-		return ""
+// segmentBar renders the 13-segment float bar used across all bot messages:
+// [●●●○○○○○○○○○○] 12.34 %
+func segmentBar(percent float64) string {
+	if percent < 0 {
+		percent = 0
 	}
-	pct := done * 100 / total
-	const cells = 10
-	filled := pct * cells / 100
-	if pct > 0 && filled == 0 {
+	if percent > 100 {
+		percent = 100
+	}
+	const total = 13
+	filled := int(percent / (100.0 / float64(total)))
+	if percent > 0 && filled == 0 {
 		filled = 1
 	}
-	if done >= total {
-		filled = cells
+	if percent >= 100 {
+		filled = total
 	}
-	return strings.Repeat("▰", filled) + strings.Repeat("▱", cells-filled) + fmt.Sprintf(" %d%%", pct)
+	return "[" + strings.Repeat("●", filled) + strings.Repeat("○", total-filled) + "] " +
+		strconv.FormatFloat(percent, 'f', 2, 64) + " %"
+}
+
+// segmentBarRatio renders segmentBar from a done/total pair.
+func segmentBarRatio(done, total int) string {
+	if total <= 0 {
+		return segmentBar(0)
+	}
+	return segmentBar(float64(done) / float64(total) * 100)
 }
 
 // anilistPost is the HTTP poster used by the organizer's AniList lookups.
@@ -192,7 +205,7 @@ func makeOrganizeReporter(bot *tgBotApi.BotAPI, chatID int64, stepTitle string) 
 			stepTitle + "\n" +
 			p.Detail + "\n\n" +
 			"📂 Moving files\n" +
-			progressBar(p.Done, p.Total) + "\n" +
+			segmentBarRatio(p.Done, p.Total) + "\n" +
 			fmt.Sprintf("%d/%d files", p.Done, p.Total)
 		if text == lastText {
 			return

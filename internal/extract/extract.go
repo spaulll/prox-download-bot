@@ -14,11 +14,23 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 )
 
-// Progress reports extraction progress: files done / total.
-type Progress func(done, total int, current string)
+// Info describes extraction progress at a point in time.
+type Info struct {
+	Done       int     // entries processed
+	Total      int     // total entries (0 when unknown)
+	Percent    float64 // 0..100 (byte-accurate when BytesTotal is set)
+	BytesDone  int64
+	BytesTotal int64
+	Current    string // file name being extracted (optional)
+}
+
+// Progress reports extraction progress.
+type Progress func(i Info)
 
 // Extractor extracts archives into a destination directory.
 type Extractor struct {
@@ -89,19 +101,34 @@ func (e *Extractor) Extract(src, destDir string, progress Progress) error {
 	lower := strings.ToLower(src)
 
 	switch {
+	case strings.HasSuffix(lower, ".zip"):
+		// native first: byte-accurate live progress (7z hides it in redraws)
+		if err := e.extractNativeZip(src, destDir, progress); err == nil {
+			return nil
+		} else if !hasBin("7z") {
+			return err
+		} else {
+			e.log("native zip failed (%v), retrying with 7z", err)
+		}
+		return e.extract7z(src, destDir, progress)
+	case strings.HasSuffix(lower, ".tar"), strings.HasSuffix(lower, ".tgz"),
+		strings.HasSuffix(lower, ".tar.gz"), strings.HasSuffix(lower, ".tar.bz2"),
+		strings.HasSuffix(lower, ".tar.xz"), strings.HasSuffix(lower, ".gz"),
+		strings.HasSuffix(lower, ".bz2"), strings.HasSuffix(lower, ".xz"):
+		if err := e.extractTar(src, destDir, progress); err == nil {
+			return nil
+		} else if !hasBin("7z") {
+			return err
+		} else {
+			e.log("native tar failed (%v), retrying with 7z", err)
+		}
+		return e.extract7z(src, destDir, progress)
 	case hasBin("7z"):
 		return e.extract7z(src, destDir, progress)
 	case strings.HasSuffix(lower, ".rar") && hasBin("unrar"):
 		return e.extractUnrar(src, destDir, progress)
 	case strings.HasSuffix(lower, ".zip") && hasBin("unzip"):
 		return e.extractUnzip(src, destDir, progress)
-	case strings.HasSuffix(lower, ".zip"):
-		return e.extractNativeZip(src, destDir, progress)
-	case strings.HasSuffix(lower, ".tar"), strings.HasSuffix(lower, ".tgz"),
-		strings.HasSuffix(lower, ".tar.gz"), strings.HasSuffix(lower, ".tar.bz2"),
-		strings.HasSuffix(lower, ".tar.xz"), strings.HasSuffix(lower, ".gz"),
-		strings.HasSuffix(lower, ".bz2"), strings.HasSuffix(lower, ".xz"):
-		return e.extractTar(src, destDir, progress)
 	default:
 		return ErrUnsupported
 	}
@@ -122,43 +149,88 @@ func hasBin(name string) bool {
 }
 
 func (e *Extractor) extract7z(src, destDir string, progress Progress) error {
-	// count entries for progress
-	total := 0
+	bytesTotal := archiveUncompressedSize(src)
+
+	// -bso0 silences normal output, -bsp1 routes the progress meter to stdout.
+	// The meter redraws in place with backspaces; parse the visible characters
+	// like a terminal would to get live percentages.
+	cmd := exec.Command("7z", "x", "-y", "-bso0", "-bsp1", "-o"+destDir, src)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("7z extract failed: %w", err)
+	}
+
+	pctRe := regexp.MustCompile(`(\d{1,3})\s*%`)
+	var vis []byte // visible text between redraw control chars
+	report := func() {
+		if progress == nil {
+			return
+		}
+		if m := pctRe.FindSubmatch(vis); m != nil {
+			pct, _ := strconv.ParseFloat(string(m[1]), 64)
+			progress(Info{
+				Total:      100,
+				Done:       int(pct),
+				Percent:    pct,
+				BytesTotal: bytesTotal,
+				BytesDone:  int64(pct / 100.0 * float64(bytesTotal)),
+			})
+		}
+	}
+	buf := make([]byte, 32*1024)
+	for {
+		n, rerr := stdout.Read(buf)
+		for _, c := range buf[:n] {
+			switch c {
+			case '\b':
+				if len(vis) > 0 {
+					vis = vis[:len(vis)-1]
+				}
+			case '\r', '\n':
+				vis = vis[:0]
+			default:
+				// cap so a chatty stream can never grow unbounded
+				if len(vis) < 512 {
+					vis = append(vis, c)
+				}
+			}
+		}
+		if n > 0 {
+			report()
+		}
+		if rerr != nil {
+			break
+		}
+	}
+	if err := cmd.Wait(); err != nil {
+		return fmt.Errorf("7z extract failed: %w", err)
+	}
+	if progress != nil {
+		progress(Info{Total: 100, Done: 100, Percent: 100,
+			BytesTotal: bytesTotal, BytesDone: bytesTotal})
+	}
+	return nil
+}
+
+// archiveUncompressedSize sums the uncompressed sizes of all entries via the
+// 7z listing. Returns 0 when unavailable.
+func archiveUncompressedSize(src string) int64 {
 	out, err := exec.Command("7z", "l", "-ba", "-slt", src).Output()
-	if err == nil {
-		for _, line := range strings.Split(string(out), "\n") {
-			if strings.HasPrefix(line, "Path = ") {
-				total++
+	if err != nil {
+		return 0
+	}
+	var total int64
+	for _, line := range strings.Split(string(out), "\n") {
+		if s, ok := strings.CutPrefix(line, "Size = "); ok {
+			if v, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64); err == nil {
+				total += v
 			}
 		}
 	}
-	if total == 0 {
-		total = 1
-	}
-	done := 0
-	cmd := exec.Command("7z", "x", "-y", "-o"+destDir, src)
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("7z extract failed: %w", err)
-	}
-	// report per-file progress after extraction by counting files
-	fileCount := countFiles(destDir)
-	done = 0
-	_ = filepath.Walk(destDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
-			return nil
-		}
-		done++
-		if progress != nil {
-			progress(done, fileCount, filepath.Base(path))
-		}
-		return nil
-	})
-	if progress != nil && fileCount == 0 {
-		progress(1, 1, filepath.Base(src))
-	}
-	return nil
+	return total
 }
 
 func (e *Extractor) extractUnrar(src, destDir string, progress Progress) error {
@@ -183,6 +255,8 @@ func (e *Extractor) extractUnzip(src, destDir string, progress Progress) error {
 	return nil
 }
 
+// reportFileProgress walks already-extracted files; a fallback for backends
+// without native live progress (rarely hit - 7z/native cover most archives).
 func reportFileProgress(destDir string, progress Progress) {
 	if progress == nil {
 		return
@@ -194,11 +268,12 @@ func reportFileProgress(destDir string, progress Progress) {
 			return nil
 		}
 		done++
-		progress(done, total, filepath.Base(path))
+		progress(Info{Done: done, Total: total,
+			Percent: float64(done) / float64(total) * 100, Current: filepath.Base(path)})
 		return nil
 	})
 	if total == 0 {
-		progress(1, 1, "")
+		progress(Info{Done: 1, Total: 1, Percent: 100})
 	}
 }
 
@@ -213,7 +288,8 @@ func countFiles(dir string) int {
 	return n
 }
 
-// extractNativeZip handles zip archives in pure Go with per-file progress.
+// extractNativeZip handles zip archives in pure Go with byte-accurate
+// per-file progress.
 func (e *Extractor) extractNativeZip(src, destDir string, progress Progress) error {
 	r, err := zip.OpenReader(src)
 	if err != nil {
@@ -222,12 +298,16 @@ func (e *Extractor) extractNativeZip(src, destDir string, progress Progress) err
 	defer r.Close()
 
 	total := 0
+	var bytesTotal int64
 	for _, f := range r.File {
-		if !strings.HasPrefix(f.Name, "__MACOSX") {
-			total++
+		if strings.HasPrefix(f.Name, "__MACOSX") {
+			continue
 		}
+		total++
+		bytesTotal += int64(f.UncompressedSize64)
 	}
 	done := 0
+	var bytesDone int64
 	for _, f := range r.File {
 		if strings.HasPrefix(f.Name, "__MACOSX") {
 			continue
@@ -243,7 +323,10 @@ func (e *Extractor) extractNativeZip(src, destDir string, progress Progress) err
 			}
 			done++
 			if progress != nil {
-				progress(done, total, filepath.Base(f.Name))
+				progress(Info{Done: done, Total: total,
+					Percent: bytePercent(bytesDone, bytesTotal),
+					BytesDone: bytesDone, BytesTotal: bytesTotal,
+					Current: filepath.Base(f.Name)})
 			}
 			continue
 		}
@@ -254,11 +337,22 @@ func (e *Extractor) extractNativeZip(src, destDir string, progress Progress) err
 			return err
 		}
 		done++
+		bytesDone += int64(f.UncompressedSize64)
 		if progress != nil {
-			progress(done, total, filepath.Base(f.Name))
+			progress(Info{Done: done, Total: total,
+				Percent: bytePercent(bytesDone, bytesTotal),
+				BytesDone: bytesDone, BytesTotal: bytesTotal,
+				Current: filepath.Base(f.Name)})
 		}
 	}
 	return nil
+}
+
+func bytePercent(done, total int64) float64 {
+	if total <= 0 {
+		return 0
+	}
+	return float64(done) / float64(total) * 100
 }
 
 func extractZipFile(f *zip.File, dest string) error {
@@ -318,8 +412,9 @@ func (e *Extractor) extractTar(src, destDir string, progress Progress) error {
 
 	// count entries first
 	total := 0
+	var bytesTotal int64
 	for {
-		_, err := tr.Next()
+		hdr, err := tr.Next()
 		if err == io.EOF {
 			break
 		}
@@ -327,6 +422,7 @@ func (e *Extractor) extractTar(src, destDir string, progress Progress) error {
 			return err
 		}
 		total++
+		bytesTotal += hdr.Size
 	}
 	if total == 0 {
 		return ErrUnsupported
@@ -356,6 +452,7 @@ func (e *Extractor) extractTar(src, destDir string, progress Progress) error {
 	tr = tar.NewReader(reader)
 
 	done := 0
+	var bytesDone int64
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
@@ -390,8 +487,12 @@ func (e *Extractor) extractTar(src, destDir string, progress Progress) error {
 			out.Close()
 		}
 		done++
+		bytesDone += hdr.Size
 		if progress != nil {
-			progress(done, total, filepath.Base(hdr.Name))
+			progress(Info{Done: done, Total: total,
+				Percent: bytePercent(bytesDone, bytesTotal),
+				BytesDone: bytesDone, BytesTotal: bytesTotal,
+				Current: filepath.Base(hdr.Name)})
 		}
 	}
 	return nil

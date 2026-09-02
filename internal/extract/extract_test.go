@@ -40,8 +40,8 @@ func TestExtractNativeZip(t *testing.T) {
 	dest := t.TempDir()
 	e := &Extractor{}
 	var lastDone, lastTotal int
-	err := e.Extract(src, dest, func(done, total int, current string) {
-		lastDone, lastTotal = done, total
+	err := e.Extract(src, dest, func(i Info) {
+		lastDone, lastTotal = i.Done, i.Total
 	})
 	if err != nil {
 		t.Fatal(err)
