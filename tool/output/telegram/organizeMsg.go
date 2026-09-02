@@ -53,7 +53,7 @@ func (m *OrganizeProgressMsg) Delete() {
 	if m == nil {
 		return
 	}
-	if _, err := m.bot.Send(tgBotApi.NewDeleteMessage(m.chatID, m.messageID)); err != nil {
+	if _, err := m.bot.Request(tgBotApi.NewDeleteMessage(m.chatID, m.messageID)); err != nil {
 		logger.Debug("delete organize message failed: %v", err)
 	}
 }
@@ -230,7 +230,8 @@ func deleteMessages(bot *tgBotApi.BotAPI, chatID int64, ids ...int) {
 		if id == 0 {
 			continue
 		}
-		if _, err := bot.Send(tgBotApi.NewDeleteMessage(chatID, id)); err != nil {
+		// deleteMessage answers with plain true - use Request, not Send
+		if _, err := bot.Request(tgBotApi.NewDeleteMessage(chatID, id)); err != nil {
 			logger.Debug("delete message failed: %v", err)
 		}
 	}
