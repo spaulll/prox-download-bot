@@ -179,13 +179,13 @@ Work in phases. Update todos after every task. Short keyword-style commits.
   - Admin → can see **all** users’ tasks and history
 
 ### Todo
-- [ ] Store approved users (file or simple DB)
-- [ ] On `/start` → notify admin with Approve / Deny buttons
-- [ ] Handle Approve / Deny callback
-- [ ] Block unapproved users
-- [ ] When user adds a task → notify admin
-- [ ] Scope task lists / progress / history by user (admin sees everything)
-- [ ] Commits: `feat: multiuser` / `feat: admin approve` / `feat: task visibility`
+- [x] Store approved users (file or simple DB)
+- [x] On `/start` → notify admin with Approve / Deny buttons
+- [x] Handle Approve / Deny callback
+- [x] Block unapproved users
+- [x] When user adds a task → notify admin
+- [x] Scope task lists / progress / history by user (admin sees everything)
+- [x] Commits: `feat: multiuser` / `feat: admin approve` / `feat: task visibility`
 
 ---
 
