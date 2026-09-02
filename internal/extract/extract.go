@@ -333,7 +333,17 @@ func (e *Extractor) extractNativeZip(src, destDir string, progress Progress) err
 		if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
 			return err
 		}
-		if err := extractZipFile(f, name); err != nil {
+		var fileDone int64
+		if err := extractZipFile(f, name, func(n int64) {
+			// live intra-file progress (huge files update continuously)
+			fileDone += n
+			if progress != nil {
+				progress(Info{Done: done, Total: total,
+					Percent: bytePercent(bytesDone+fileDone, bytesTotal),
+					BytesDone: bytesDone + fileDone, BytesTotal: bytesTotal,
+					Current: filepath.Base(f.Name)})
+			}
+		}); err != nil {
 			return err
 		}
 		done++
@@ -355,7 +365,21 @@ func bytePercent(done, total int64) float64 {
 	return float64(done) / float64(total) * 100
 }
 
-func extractZipFile(f *zip.File, dest string) error {
+// progressReader counts bytes passing through and calls onRead per chunk.
+type progressReader struct {
+	r      io.Reader
+	onRead func(int64)
+}
+
+func (p *progressReader) Read(b []byte) (int, error) {
+	n, err := p.r.Read(b)
+	if n > 0 && p.onRead != nil {
+		p.onRead(int64(n))
+	}
+	return n, err
+}
+
+func extractZipFile(f *zip.File, dest string, onRead func(int64)) error {
 	rc, err := f.Open()
 	if err != nil {
 		return err
@@ -366,7 +390,11 @@ func extractZipFile(f *zip.File, dest string) error {
 		return err
 	}
 	defer out.Close()
-	_, err = io.Copy(out, rc)
+	var r io.Reader = rc
+	if onRead != nil {
+		r = &progressReader{r: rc, onRead: onRead}
+	}
+	_, err = io.Copy(out, r)
 	return err
 }
 
@@ -480,11 +508,22 @@ func (e *Extractor) extractTar(src, destDir string, progress Progress) error {
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(out, tr); err != nil {
-				out.Close()
-				return err
+			var fileDone int64
+			var src io.Reader = tr
+			if progress != nil {
+				src = &progressReader{r: tr, onRead: func(n int64) {
+					fileDone += n
+					progress(Info{Done: done, Total: total,
+						Percent: bytePercent(bytesDone+fileDone, bytesTotal),
+						BytesDone: bytesDone + fileDone, BytesTotal: bytesTotal,
+						Current: filepath.Base(hdr.Name)})
+				}}
 			}
+			_, copyErr := io.Copy(out, src)
 			out.Close()
+			if copyErr != nil {
+				return copyErr
+			}
 		}
 		done++
 		bytesDone += hdr.Size
