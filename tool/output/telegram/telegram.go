@@ -281,26 +281,25 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 				FileControlChan <- task[0]
 				bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, i18nLoc.LocText("operationSuccess")))
 			case "20":
-				// approve user (admin only)
+				// approve user (admin only): replace the request entirely
 				if isAdminID(update.CallbackQuery.From.ID) {
 					if parts := strings.Split(task[0], "~"); len(parts) == 2 {
 						id := typeTrans.Str2Int64(parts[1])
 						userStore.SetRole(id, users.RoleApproved)
 						bot.Send(tgBotApi.NewMessage(id, "✅ Your access has been approved!\nSend /start to begin."))
 						bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, "✅ User approved"))
-						// confirm on the request message + remove the buttons
 						if update.CallbackQuery.Message != nil {
 							label := accessUserLabel(id)
 							edit := tgBotApi.NewEditMessageText(update.CallbackQuery.Message.Chat.ID,
 								update.CallbackQuery.Message.MessageID,
-								"✅ Access approved\n\n👤 "+label)
+								"✅ Access approved\n\n👤 "+label+"\n\nThe user can now use the bot.")
 							edit.ReplyMarkup = &tgBotApi.InlineKeyboardMarkup{}
 							bot.Request(edit)
 						}
 					}
 				}
 			case "21":
-				// deny user (admin only)
+				// deny user (admin only): replace the request entirely
 				if isAdminID(update.CallbackQuery.From.ID) {
 					if parts := strings.Split(task[0], "~"); len(parts) == 2 {
 						id := typeTrans.Str2Int64(parts[1])
@@ -311,22 +310,24 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 							label := accessUserLabel(id)
 							edit := tgBotApi.NewEditMessageText(update.CallbackQuery.Message.Chat.ID,
 								update.CallbackQuery.Message.MessageID,
-								"⛔ Access denied\n\n👤 "+label)
+								"⛔ Access denied\n\n👤 "+label+"\n\nThe user can send /start again to re-request access.")
 							edit.ReplyMarkup = &tgBotApi.InlineKeyboardMarkup{}
 							bot.Request(edit)
 						}
 					}
 				}
 			case "30":
-				// clear finished/stopped history (admin only)
+				// clear finished/stopped history (admin only): purge results
+				// and delete the history message itself
 				if isAdminID(update.CallbackQuery.From.ID) {
 					input.ToolApp.Aria2.PurgeResults()
 					bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, "🗑 History cleared"))
 					if update.CallbackQuery.Message != nil {
-						edit := tgBotApi.NewEditMessageText(update.CallbackQuery.Message.Chat.ID,
-							update.CallbackQuery.Message.MessageID, "🗑 History cleared.")
-						edit.ReplyMarkup = &tgBotApi.InlineKeyboardMarkup{}
-						bot.Request(edit)
+						if _, err := bot.Request(tgBotApi.NewDeleteMessage(
+							update.CallbackQuery.Message.Chat.ID,
+							update.CallbackQuery.Message.MessageID)); err != nil {
+							logger.Debug("delete history message failed: %v", err)
+						}
 					}
 				}
 			}
