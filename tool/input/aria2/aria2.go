@@ -265,6 +265,16 @@ func (a Aria2) FormatTellStoppedFiltered(allow map[string]bool) string {
 	return formatTellSomethingFiltered(info, err, allow)
 }
 
+// StoppedTasks returns aria2's recent stopped/completed downloads (raw).
+// Returns nil on RPC failure - used by startup recovery, must never panic.
+func (a Aria2) StoppedTasks() []rpc2.StatusInfo {
+	info, err := aria2Rpc.TellStopped(0, 1000)
+	if err != nil {
+		return nil
+	}
+	return info
+}
+
 // FormatGidAndName
 //
 //	@Description: Provide formatted GID and name according to method

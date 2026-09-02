@@ -193,9 +193,13 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 	activeBot = bot
 	initUsers()
 	bot.Debug = false
+	// sweep crashed-run staging dirs before aria2 can deliver new events
+	recoverCleanupStages()
 	input.ToolApp.Aria2.Load(Notifier{}, func(gid string) {
 		TMSelectMessageChan <- gid
 	}, false)
+	// aria2 is connected: resume downloads completed but never organized
+	recoverResumeDownloads()
 
 	logger.Info(fmt.Sprintf(i18nLoc.LocText("authorizedAccount"), bot.Self.UserName))
 	defer wg.Done()
