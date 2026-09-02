@@ -84,14 +84,14 @@ Work in phases. Update todos after every task. Short keyword-style commits.
 **Supported:** zip, rar, 7z, tar, gz, bz2, xz
 
 ### Todo
-- [ ] Safe extraction (prefer external tools or solid Go libs)
-- [ ] Detect archive on download complete
-- [ ] Extract to temp with live progress updates to Telegram
-- [ ] After extract → full organize pipeline on contents
-- [ ] Optional: delete original archive (config)
-- [ ] Handle nested / multi-volume archives
-- [ ] Timeout + error handling for large/slow extracts
-- [ ] Commits: `feat: archive extract` / `fix: slow extract progress`
+- [x] Safe extraction (prefer external tools or solid Go libs)
+- [x] Detect archive on download complete
+- [x] Extract to temp with live progress updates to Telegram
+- [x] After extract → full organize pipeline on contents
+- [x] Optional: delete original archive (config)
+- [x] Handle nested / multi-volume archives
+- [x] Timeout + error handling for large/slow extracts
+- [x] Commits: `feat: archive extract` / `fix: slow extract progress`
 
 ---
 
