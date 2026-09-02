@@ -12,6 +12,7 @@ import (
 	"log"
 	"regexp"
 	"strconv"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -479,4 +480,31 @@ func (a Aria2) GetVersion() string {
 	version, err := aria2Rpc.GetVersion()
 	dropErr(err)
 	return version.Version
+}
+
+// DownloadedPath resolves the on-disk path and display name of a completed
+// download. For torrents it returns the torrent root directory.
+func (a Aria2) DownloadedPath(gid string) (path string, name string) {
+	info, err := aria2Rpc.TellStatus(gid)
+	dropErr(err)
+	if info.BitTorrent.Info.Name != "" {
+		for _, f := range info.Files {
+			if f.Path != "" {
+				p := filepath.Clean(f.Path)
+				dl := filepath.Clean(config.GetDownloadFolder())
+				rel, rerr := filepath.Rel(dl, p)
+				if rerr == nil && rel != "." && strings.Contains(rel, string(filepath.Separator)) {
+					return filepath.Join(dl, strings.SplitN(rel, string(filepath.Separator), 2)[0]), info.BitTorrent.Info.Name
+				}
+				return dl, info.BitTorrent.Info.Name
+			}
+		}
+		return config.GetDownloadFolder(), info.BitTorrent.Info.Name
+	}
+	for _, f := range info.Files {
+		if f.Path != "" {
+			return filepath.Clean(f.Path), filepath.Base(f.Path)
+		}
+	}
+	return "", ""
 }

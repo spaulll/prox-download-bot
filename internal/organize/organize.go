@@ -69,7 +69,7 @@ func (o *Organizer) OrganizeFile(srcPath string, report Reporter) (*Result, erro
 
 	// directory download (e.g. torrent with folder): organize contents
 	if info.IsDir() {
-		return o.organizeDir(srcPath, report)
+		return o.OrganizeDirectory(srcPath, report)
 	}
 
 	ext := filepath.Ext(srcPath)
@@ -93,12 +93,11 @@ func (o *Organizer) OrganizeFile(srcPath string, report Reporter) (*Result, erro
 
 	res.Category = category
 	res.Duration = time.Since(start)
-	res.SizeBytes = fileSize(srcPath)
 	return res, nil
 }
 
-// organizeDir organizes every file inside a downloaded directory.
-func (o *Organizer) organizeDir(dir string, report Reporter) (*Result, error) {
+// OrganizeDirectory organizes every file inside a downloaded directory.
+func (o *Organizer) OrganizeDirectory(dir string, report Reporter) (*Result, error) {
 	start := time.Now()
 	res := &Result{Started: start}
 
@@ -114,10 +113,9 @@ func (o *Organizer) organizeDir(dir string, report Reporter) (*Result, error) {
 		return nil, err
 	}
 
-	res.SizeBytes = dirSize(dir)
 	total := len(files)
 	for i, f := range files {
-		report(Progress{Step: "moving", Detail: "Analyzing content", Done: i, Total: total})
+		reportFn(report, Progress{Step: "moving", Detail: "Analyzing content", Done: i, Total: total})
 		o.routeFile(f, res)
 	}
 	// remove now-empty source dir
@@ -256,6 +254,7 @@ func (o *Organizer) moveFile(src, dst string, res *Result) {
 		res.Moved = append(res.Moved, dst)
 		return
 	}
+	res.SizeBytes += fileSize(src)
 	dst = uniquePath(dst)
 	if err := os.Rename(src, dst); err != nil {
 		// cross-device: fall back to copy+delete
@@ -308,13 +307,10 @@ func fileSize(path string) int64 {
 	return s.Size()
 }
 
-func dirSize(path string) int64 {
-	var size int64
-	_ = filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
-		if err == nil && !info.IsDir() {
-			size += info.Size()
-		}
-		return nil
-	})
-	return size
+
+// reportFn safely invokes a Reporter (nil-safe).
+func reportFn(r Reporter, p Progress) {
+	if r != nil {
+		r(p)
+	}
 }

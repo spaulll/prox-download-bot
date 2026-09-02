@@ -85,11 +85,11 @@ func (o *Organizer) OrganizeSeasonPack(in SeasonPackInput, report Reporter) (*Re
 
 	total := len(in.EpisodeFiles)
 	for i, ep := range in.EpisodeFiles {
-		report(Progress{Step: "moving", Detail: res.Detail, Done: i, Total: total})
+		reportFn(report, Progress{Step: "moving", Detail: res.Detail, Done: i, Total: total})
 		dst := filepath.Join(seasonDir, SanitizeFileName(CleanEpisodeFileName(filepath.Base(ep))))
 		o.moveFile(ep, dst, res)
 	}
-	report(Progress{Step: "moving", Detail: res.Detail, Done: total, Total: total})
+	reportFn(report, Progress{Step: "moving", Detail: res.Detail, Done: total, Total: total})
 
 	// extras -> movies
 	for _, other := range in.OtherFiles {

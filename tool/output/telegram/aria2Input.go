@@ -485,7 +485,7 @@ func (Notifier) OnDownloadStop(events []rpc.Event) {
 // OnDownloadComplete will be sent when a download is complete. For BitTorrent downloads, this notification is sent when the download is complete and seeding is over. The event is the same struct of the event argument of onDownloadStart() method.
 func (Notifier) OnDownloadComplete(events []rpc.Event) {
 	logger.Info(i18nLoc.LocText("onDownloadCompleteDes"), events)
-	SuddenMessageChan <- fmt.Sprintf(i18nLoc.LocText("onDownloadCompleteDes"), events)
+	handleDownloadComplete(events)
 }
 
 // OnDownloadError will be sent when a download is stopped due to an error. The event is the same struct as the event argument of onDownloadStart() method.

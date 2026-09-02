@@ -76,6 +76,9 @@ func SendTelegramSuddenMessage(text string) {
 
 var tBot *tgBotApi.BotAPI
 
+// activeBot is the running bot instance used by the organize pipeline
+var activeBot *tgBotApi.BotAPI
+
 func createKeyBoardRow(texts ...string) [][]tgBotApi.KeyboardButton {
 	Keyboards := make([][]tgBotApi.KeyboardButton, 0)
 	for _, text := range texts {
@@ -144,6 +147,7 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 	bot, err := tgBotApi.NewBotAPI(BotKey)
 	dropErr(err)
 	tBot = bot
+	activeBot = bot
 	bot.Debug = false
 	input.ToolApp.Aria2.Load(Notifier{}, func(gid string) {
 		TMSelectMessageChan <- gid
