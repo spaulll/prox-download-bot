@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -41,9 +42,13 @@ type Config struct {
 
 // Progress is reported during download.
 type Progress struct {
-	Percent float64
-	Stage   string // "downloading" | "processing" | "done"
-	Detail  string
+	Percent         float64
+	Stage           string // "downloading" | "processing" | "done"
+	Detail          string
+	TotalBytes      int64
+	DownloadedBytes int64
+	SpeedBytes      int64 // bytes per second
+	ETASeconds      int
 }
 
 // Reporter receives progress updates.
@@ -256,7 +261,9 @@ func (d *Downloader) Download(rawURL string, report Reporter) (*Result, error) {
 	}
 
 	var files []string
-	progressRe := regexp.MustCompile(`\[download\]\s+([0-9.]+)% of\s+~?\s*([0-9.]+)([KMG]iB)`)
+	// example: [download]  42.3% of   123.45MiB at    5.67MiB/s ETA 00:30
+	progressRe := regexp.MustCompile(`\[download\]\s+([0-9.]+)%\s+of\s+~?\s*([0-9.]+)([KMGT]?i?B)` +
+		`(?:\s+at\s+([0-9.]+)([KMGT]?i?B)/s)?(?:\s+ETA\s+(\S+))?`)
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 
@@ -284,8 +291,25 @@ func (d *Downloader) Download(rawURL string, report Reporter) (*Result, error) {
 		if m := progressRe.FindStringSubmatch(trimmed); m != nil {
 			var pct float64
 			fmt.Sscanf(m[1], "%f", &pct)
+			total := parseSizeBytes(m[2], m[3])
+			var speed int64
+			if m[4] != "" {
+				speed = parseSizeBytes(m[4], m[5])
+			}
+			eta := 0
+			if m[6] != "" && !strings.EqualFold(m[6], "Unknown") {
+				eta = etaSeconds(m[6])
+			}
 			if report != nil {
-				report(Progress{Percent: pct, Stage: "downloading", Detail: trimmed})
+				report(Progress{
+					Percent:         pct,
+					Stage:           "downloading",
+					Detail:          trimmed,
+					TotalBytes:      total,
+					DownloadedBytes: int64(pct / 100.0 * float64(total)),
+					SpeedBytes:      speed,
+					ETASeconds:      eta,
+				})
 			}
 			continue
 		}
@@ -335,4 +359,37 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// parseSizeBytes converts a "9.50" + "GiB" style pair into bytes.
+func parseSizeBytes(value, unit string) int64 {
+	var v float64
+	if _, err := fmt.Sscanf(value, "%f", &v); err != nil {
+		return 0
+	}
+	mult := 1.0
+	switch strings.TrimSuffix(unit, "B") {
+	case "K", "Ki":
+		mult = 1024
+	case "M", "Mi":
+		mult = 1024 * 1024
+	case "G", "Gi":
+		mult = 1024 * 1024 * 1024
+	case "T", "Ti":
+		mult = 1024 * 1024 * 1024 * 1024
+	}
+	return int64(v * mult)
+}
+
+// etaSeconds converts "HH:MM:SS" / "MM:SS" / "SS" into seconds.
+func etaSeconds(s string) int {
+	secs := 0
+	for _, part := range strings.Split(s, ":") {
+		n, err := strconv.Atoi(part)
+		if err != nil {
+			return 0
+		}
+		secs = secs*60 + n
+	}
+	return secs
 }

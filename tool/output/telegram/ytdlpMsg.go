@@ -7,6 +7,7 @@ import (
 	logger "DownloadBot/tool/zap"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,12 +17,21 @@ import (
 // buildYtdlpDownloader builds the yt-dlp downloader from config.
 func buildYtdlpDownloader() *ytdlp.Downloader {
 	cfg := config.GetOrganizeConfig()
+	// default library bases live under the download folder when unset
+	youTube := cfg.YouTube
+	if youTube == "" {
+		youTube = filepath.Join(config.GetDownloadFolder(), "YouTube")
+	}
+	services := cfg.Services
+	if services == "" {
+		services = filepath.Join(config.GetDownloadFolder(), "Services")
+	}
 	return &ytdlp.Downloader{
 		Cfg: ytdlp.Config{
 			BinPath:        cfg.YtdlpPath,
 			Quality:        cfg.YtdlpQuality,
-			BaseYouTube:    cfg.YouTube,
-			BaseServices:   cfg.Services,
+			BaseYouTube:    youTube,
+			BaseServices:   services,
 			Cookies:        cfg.YtdlpCookies,
 			Proxy:          cfg.YtdlpProxy,
 			EmbedThumbnail: cfg.YtdlpEmbed,
@@ -31,13 +41,34 @@ func buildYtdlpDownloader() *ytdlp.Downloader {
 	}
 }
 
+// taskProgressBar renders the 13-segment bar with float percent, matching the
+// aria2 task list style: [●●●○○○○○○○○○○] 12.34 %
+func taskProgressBar(percent float64) string {
+	if percent < 0 {
+		percent = 0
+	}
+	if percent > 100 {
+		percent = 100
+	}
+	const total = 13
+	filled := int(percent / (100.0 / float64(total)))
+	if percent > 0 && filled == 0 {
+		filled = 1
+	}
+	if percent >= 100 {
+		filled = total
+	}
+	return "[" + strings.Repeat("●", filled) + strings.Repeat("○", total-filled) + "] " +
+		strconv.FormatFloat(percent, 'f', 2, 64) + " %"
+}
+
 // startYtdlpDownload runs the yt-dlp pipeline with a live Telegram progress
 // message. Runs asynchronously (call in a goroutine).
 func startYtdlpDownload(bot *tgBotApi.BotAPI, chatID int64, rawURL string) {
 	dl := buildYtdlpDownloader()
 
 	// announce
-	live := NewOrganizeProgressMsg(bot, chatID, "⬇️ Downloading\n▱▱▱▱▱▱▱▱▱▱ 0%\n"+rawURL)
+	live := NewOrganizeProgressMsg(bot, chatID, "⬇️ Downloading\n"+taskProgressBar(0)+"\n"+rawURL)
 	var lastText string
 	var lastUpdate time.Time
 	report := func(p ytdlp.Progress) {
@@ -48,12 +79,25 @@ func startYtdlpDownload(bot *tgBotApi.BotAPI, chatID int64, rawURL string) {
 		var text string
 		switch p.Stage {
 		case "downloading":
-			text = "⬇️ Downloading\n" +
-				progressBar(int(p.Percent), 100) + "\n" +
-				rawURL
+			lines := []string{
+				"⬇️ Downloading",
+				taskProgressBar(p.Percent),
+			}
+			if p.TotalBytes > 0 {
+				lines = append(lines, fmt.Sprintf("Downloaded: %s of %s",
+					typeTrans.Byte2Readable(float64(p.DownloadedBytes)),
+					typeTrans.Byte2Readable(float64(p.TotalBytes))))
+			}
+			if p.SpeedBytes > 0 {
+				lines = append(lines, "Speed: "+typeTrans.Byte2Readable(float64(p.SpeedBytes))+"/s")
+			}
+			if p.ETASeconds > 0 {
+				lines = append(lines, "ETA: "+formatDuration(time.Duration(p.ETASeconds)*time.Second))
+			}
+			text = strings.Join(lines, "\n") + "\n" + rawURL
 		case "processing":
 			text = "⬇️ Downloading\n" +
-				progressBar(100, 100) + "\n" +
+				taskProgressBar(100) + "\n" +
 				strings.SplitN(p.Detail, "]", 2)[0][1:] + "..."
 		case "done":
 			return
@@ -80,6 +124,10 @@ func startYtdlpDownload(bot *tgBotApi.BotAPI, chatID int64, rawURL string) {
 	for _, f := range res.Files {
 		fileList += "• " + filepath.Base(f) + "\n"
 	}
+	saved := ""
+	if len(res.Files) > 0 {
+		saved = "📁 Saved to: " + filepath.Dir(res.Files[0]) + "\n"
+	}
 	what := res.Service
 	if strings.EqualFold(res.Service, "youtube") {
 		what = "YouTube"
@@ -88,11 +136,13 @@ func startYtdlpDownload(bot *tgBotApi.BotAPI, chatID int64, rawURL string) {
 		"✅ Download completed\n\n"+
 			"📺 %s\n%s\n"+
 			"%s\n"+
+			"%s"+
 			"📦 Size: %s\n"+
 			"⏱ Time taken: %s",
 		what,
 		res.Title,
 		fileList,
+		saved,
 		typeTrans.Byte2Readable(float64(res.SizeBytes)),
 		formatDuration(res.Duration),
 	)
