@@ -314,6 +314,11 @@ func (a Aria2) StoppedTasks() []rpc2.StatusInfo {
 	return info
 }
 
+// PurgeResults clears aria2's finished/stopped download history.
+func (a Aria2) PurgeResults() {
+	_, _ = aria2Rpc.PurgeDownloadResult()
+}
+
 // finishedAt tracks when a download finished (aria2 does not expose it).
 var finishedAt sync.Map // gid -> time.Time
 

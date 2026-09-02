@@ -122,6 +122,38 @@ func notifyAdmin(text string) {
 	sendPlain(tBot, adminIDs[0], text)
 }
 
+// notifyAdminRequest sends (or re-sends) an access request with Approve/Deny
+// buttons to the admin.
+func notifyAdminRequest(bot *tgBotApi.BotAPI, senderID int64, username, fullName string, reRequest bool) {
+	title := "👤 New user request"
+	if reRequest {
+		title = "🔁 Re-request from denied user"
+	}
+	reqMsg := tgBotApi.NewMessage(adminIDs[0], fmt.Sprintf(
+		"%s\n\nID: `%d`\nName: %s\nUsername: %s\n\nApprove this user?",
+		title, senderID, fullName, username))
+	reqMsg.ReplyMarkup = tgBotApi.NewInlineKeyboardMarkup(
+		tgBotApi.NewInlineKeyboardRow(
+			tgBotApi.NewInlineKeyboardButtonData("✅ Approve", fmt.Sprintf("approve~%d:20", senderID)),
+			tgBotApi.NewInlineKeyboardButtonData("⛔ Deny", fmt.Sprintf("deny~%d:21", senderID)),
+		),
+	)
+	bot.Send(reqMsg)
+}
+
+// accessUserLabel renders a stored user for decision confirmations.
+func accessUserLabel(id int64) string {
+	if u, ok := userStore.Get(id); ok {
+		if u.Username != "" {
+			return "@" + u.Username
+		}
+		if u.FullName != "" {
+			return u.FullName
+		}
+	}
+	return fmt.Sprintf("%d", id)
+}
+
 func createKeyBoardRow(texts ...string) [][]tgBotApi.KeyboardButton {
 	Keyboards := make([][]tgBotApi.KeyboardButton, 0)
 	for _, text := range texts {
@@ -255,7 +287,16 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 						id := typeTrans.Str2Int64(parts[1])
 						userStore.SetRole(id, users.RoleApproved)
 						bot.Send(tgBotApi.NewMessage(id, "✅ Your access has been approved!\nSend /start to begin."))
-						bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, "User approved"))
+						bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, "✅ User approved"))
+						// confirm on the request message + remove the buttons
+						if update.CallbackQuery.Message != nil {
+							label := accessUserLabel(id)
+							edit := tgBotApi.NewEditMessageText(update.CallbackQuery.Message.Chat.ID,
+								update.CallbackQuery.Message.MessageID,
+								"✅ Access approved\n\n👤 "+label)
+							edit.ReplyMarkup = &tgBotApi.InlineKeyboardMarkup{}
+							bot.Request(edit)
+						}
 					}
 				}
 			case "21":
@@ -265,7 +306,27 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 						id := typeTrans.Str2Int64(parts[1])
 						userStore.SetRole(id, users.RoleDenied)
 						bot.Send(tgBotApi.NewMessage(id, "⛔ Your access request was denied."))
-						bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, "User denied"))
+						bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, "⛔ User denied"))
+						if update.CallbackQuery.Message != nil {
+							label := accessUserLabel(id)
+							edit := tgBotApi.NewEditMessageText(update.CallbackQuery.Message.Chat.ID,
+								update.CallbackQuery.Message.MessageID,
+								"⛔ Access denied\n\n👤 "+label)
+							edit.ReplyMarkup = &tgBotApi.InlineKeyboardMarkup{}
+							bot.Request(edit)
+						}
+					}
+				}
+			case "30":
+				// clear finished/stopped history (admin only)
+				if isAdminID(update.CallbackQuery.From.ID) {
+					input.ToolApp.Aria2.PurgeResults()
+					bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, "🗑 History cleared"))
+					if update.CallbackQuery.Message != nil {
+						edit := tgBotApi.NewEditMessageText(update.CallbackQuery.Message.Chat.ID,
+							update.CallbackQuery.Message.MessageID, "🗑 History cleared.")
+						edit.ReplyMarkup = &tgBotApi.InlineKeyboardMarkup{}
+						bot.Request(edit)
 					}
 				}
 			}
@@ -287,27 +348,22 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 				role := userStore.UpsertStarted(senderID, senderUsername, senderName)
 				if isAdminID(senderID) {
 					// admins fall through to normal handling below
-				} else if role == users.RolePending && !userStore.Approved(senderID) {
-					name := senderName
-					if senderUsername != "" {
-						name = "@" + senderUsername
-					}
-					reqMsg := tgBotApi.NewMessage(adminIDs[0], fmt.Sprintf(
-						"👤 New user request\n\nID: `%d`\nName: %s\nUsername: %s\n\nApprove this user?",
-						senderID, name, senderUsername))
-					reqMsg.ReplyMarkup = tgBotApi.NewInlineKeyboardMarkup(
-						tgBotApi.NewInlineKeyboardRow(
-							tgBotApi.NewInlineKeyboardButtonData("✅ Approve", fmt.Sprintf("approve~%d:20", senderID)),
-							tgBotApi.NewInlineKeyboardButtonData("⛔ Deny", fmt.Sprintf("deny~%d:21", senderID)),
-						),
-					)
-					bot.Send(reqMsg)
+				} else if role == users.RoleApproved {
+					msg.Text = "👋 Welcome back!\nSend me a link to download."
+					_, err := bot.Send(msg)
+					dropErr(err)
+					continue
+				} else if role == users.RolePending {
+					notifyAdminRequest(bot, senderID, senderUsername, senderName, false)
 					msg.Text = "👋 Welcome! Your access request has been sent to the admin.\nYou will be notified when approved."
 					_, err := bot.Send(msg)
 					dropErr(err)
 					continue
 				} else if role == users.RoleDenied {
-					msg.Text = "⛔ Your access request was denied."
+					// denied users may re-request: flip back to pending and
+					// notify the admin again (fresh message, no scrolling)
+					notifyAdminRequest(bot, senderID, senderUsername, senderName, true)
+					msg.Text = "👋 Your previous request was denied.\nA new access request has been sent to the admin."
 					_, err := bot.Send(msg)
 					dropErr(err)
 					continue
@@ -344,6 +400,13 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 						msg.Text = res
 					} else {
 						msg.Text = i18nLoc.LocText("noOverTask")
+					}
+					if isAdminID(senderID) {
+						msg.ReplyMarkup = tgBotApi.NewInlineKeyboardMarkup(
+							tgBotApi.NewInlineKeyboardRow(
+								tgBotApi.NewInlineKeyboardButtonData("🗑 Clear history", "clearhistory:30"),
+							),
+						)
 					}
 				case i18nLoc.LocText("pauseTask"):
 					InlineKeyboards, text := createFilesInlineKeyBoardRow(filesInlineKeyboards{
