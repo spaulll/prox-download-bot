@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	tgBotApi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -35,9 +36,18 @@ func runArchivePipeline(bot *tgBotApi.BotAPI, chatID int64, org *organize.Organi
 		return
 	}
 
-	// staging dir next to the archive
-	stageDir := filepath.Join(os.TempDir(), fmt.Sprintf("proxbot_extract_%d", time.Now().UnixNano()))
+	// staging dir next to the archive: must be on the same filesystem as the
+	// download so extraction writes to real disk (never RAM-backed /tmp, which
+	// OOM-kills the container on large archives) and moves stay atomic renames
+	stageDir := filepath.Join(filepath.Dir(srcPath), fmt.Sprintf(".proxbot_extract_%d", time.Now().UnixNano()))
 	defer os.RemoveAll(stageDir)
+
+	// pre-flight: refuse to extract when disk space is clearly insufficient
+	if info, err := os.Stat(srcPath); err == nil && !hasFreeSpace(filepath.Dir(srcPath), info.Size()*2) {
+		live.Update("🗂 Organizing...\n\n⚠️ Not enough disk space to extract\n" +
+			"Archive: " + typeTrans.Byte2Readable(float64(info.Size())))
+		return
+	}
 
 	// "Extracting" live progress
 	var lastUpdate time.Time
@@ -121,10 +131,12 @@ func runArchivePipeline(bot *tgBotApi.BotAPI, chatID int64, org *organize.Organi
 			live.Update("🗂 Organizing...\n\n⚠️ Failed to prepare archive folder")
 			return
 		}
-		if err := os.Rename(stageDir, uniqueDest(dest)); err != nil {
+		finalDir := uniqueDest(dest)
+		if err := os.Rename(stageDir, finalDir); err != nil {
 			live.Update("🗂 Organizing...\n\n⚠️ Failed to move archive content")
 			return
 		}
+		stageDir = finalDir
 		res = &organize.Result{Category: organize.CatArchives}
 	}
 	if err != nil {
@@ -158,6 +170,17 @@ func uniqueDest(dest string) string {
 			return cand
 		}
 	}
+}
+
+// hasFreeSpace reports whether path's filesystem has more than need bytes
+// available. Returns true when the check cannot be performed (fail-open).
+func hasFreeSpace(path string, need int64) bool {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(path, &st); err != nil {
+		return true
+	}
+	avail := int64(st.Bavail) * int64(st.Bsize)
+	return avail > need
 }
 
 func dirTreeSize(path string) int64 {
