@@ -10,6 +10,7 @@ import (
 	"DownloadBot/tool/typeTrans"
 	logger "DownloadBot/tool/zap"
 	"fmt"
+	"math/rand"
 	tgBotApi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"log"
 	"regexp"
@@ -468,6 +469,26 @@ func (Notifier) OnDownloadStart(events []rpc.Event) {
 
 	SuddenMessageChan <- fmt.Sprintf(i18nLoc.LocText("onDownloadStartDes"), events)
 	aria2.TMMessageChan <- events[0].Gid
+	// show the live progress view automatically, no button press needed
+	go autoShowProgress()
+}
+
+// autoShowProgress starts the live download progress message right after a
+// download begins, replacing any previous auto view (flag mechanism).
+func autoShowProgress() {
+	if activeBot == nil {
+		return
+	}
+	// brief delay so the new task is registered as active in aria2
+	time.Sleep(200 * time.Millisecond)
+	if input.ToolApp.Aria2.FormatTellActive() == "" {
+		return
+	}
+	ticker := time.NewTicker(500 * time.Millisecond)
+	rand.Seed(time.Now().UnixNano())
+	a := rand.Intn(100000)
+	activeRefreshControl = a
+	activeRefresh(0, activeBot, ticker, a)
 }
 
 // OnDownloadPause will be sent when a download is paused. The event is the same struct as the event argument of onDownloadStart() method.
