@@ -228,6 +228,8 @@ func (d *Downloader) Download(rawURL string, report Reporter) (*Result, error) {
 		"-f", quality,
 		"--merge-output-format", "mp4",
 		"--newline",
+		// stdout is a pipe (not a TTY): yt-dlp hides progress unless forced
+		"--progress",
 		"--no-mtime",
 		"--no-warnings",
 		"-o", filepath.Join(dir, "%(title)s.%(ext)s"),
