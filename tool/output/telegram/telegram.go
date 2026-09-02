@@ -4,10 +4,10 @@ import (
 	i18nLoc "DownloadBot/i18n"
 	"DownloadBot/internal/config"
 	"DownloadBot/internal/users"
+	"DownloadBot/internal/ytdlp"
 	"DownloadBot/tool/displayUtil/gotree"
 	"DownloadBot/tool/input"
 	"DownloadBot/tool/monitor"
-	"DownloadBot/internal/ytdlp"
 	"DownloadBot/tool/typeTrans"
 	logger "DownloadBot/tool/zap"
 	"fmt"
@@ -317,7 +317,6 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 						allowGids[t.GID] = true
 					}
 				}
-
 
 				switch update.Message.Text {
 				case i18nLoc.LocText("nowDownload"):

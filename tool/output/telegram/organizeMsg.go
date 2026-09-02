@@ -1,13 +1,13 @@
 package telegram
 
 import (
-	"bytes"
 	"DownloadBot/internal/config"
 	"DownloadBot/internal/organize"
 	"DownloadBot/tool/input"
 	"DownloadBot/tool/input/aria2/rpc"
 	"DownloadBot/tool/typeTrans"
 	logger "DownloadBot/tool/zap"
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -243,6 +243,7 @@ func sendOrganizeSummary(bot *tgBotApi.BotAPI, chatID int64, sourceName string, 
 	)
 	sendPlain(bot, chatID, text)
 }
+
 // handleDownloadComplete is invoked by the notifier on download completion.
 // Resolves the finished download path and starts the organize pipeline.
 func handleDownloadComplete(events []rpc.Event) {

@@ -52,9 +52,9 @@ func Categorize(ext string) string {
 }
 
 // IsVideo/IsArchive helpers used by the extraction pipeline
-func IsVideo(name string) bool  { return videoExts[strings.ToLower(filepath.Ext(name))] }
-func IsAudio(name string) bool  { return audioExts[strings.ToLower(filepath.Ext(name))] }
-func IsDoc(name string) bool    { return docExts[strings.ToLower(filepath.Ext(name))] }
+func IsVideo(name string) bool   { return videoExts[strings.ToLower(filepath.Ext(name))] }
+func IsAudio(name string) bool   { return audioExts[strings.ToLower(filepath.Ext(name))] }
+func IsDoc(name string) bool     { return docExts[strings.ToLower(filepath.Ext(name))] }
 func IsArchive(name string) bool { return archiveExts[strings.ToLower(filepath.Ext(name))] }
 
 // Paths holds the resolved library directory layout.

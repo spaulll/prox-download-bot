@@ -31,7 +31,7 @@ func (r Reporter) report(p Progress) {
 // Result summarizes one organize run.
 type Result struct {
 	Category  string
-	Detail    string // e.g. "TV Series • Season 1 detected"
+	Detail    string   // e.g. "TV Series • Season 1 detected"
 	Moved     []string // final destination paths
 	Failed    []string
 	Tree      string // rendered tree for the final message
@@ -306,7 +306,6 @@ func fileSize(path string) int64 {
 	}
 	return s.Size()
 }
-
 
 // reportFn safely invokes a Reporter (nil-safe).
 func reportFn(r Reporter, p Progress) {

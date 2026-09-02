@@ -7,13 +7,13 @@ import (
 
 // Task is a download task owned by a user.
 type Task struct {
-	GID      string    `json:"gid"`
-	UserID   int64     `json:"userId"`
-	Link     string    `json:"link"`
-	Name     string    `json:"name"`
-	AddedAt  time.Time `json:"addedAt"`
-	Engine   string    `json:"engine"` // aria2 | ytdlp
-	Status   string    `json:"status"` // downloading | completed | failed | removed
+	GID     string    `json:"gid"`
+	UserID  int64     `json:"userId"`
+	Link    string    `json:"link"`
+	Name    string    `json:"name"`
+	AddedAt time.Time `json:"addedAt"`
+	Engine  string    `json:"engine"` // aria2 | ytdlp
+	Status  string    `json:"status"` // downloading | completed | failed | removed
 }
 
 // TaskStore maps gids to the user who added them (in-memory + JSON persist).

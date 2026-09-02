@@ -54,7 +54,6 @@ func InitLog(logPath, errPath string, level string) {
 		return lvl >= zapcore.WarnLevel && lvl >= logLevel
 	})
 
-
 	var zapCores []zapcore.Core
 	var infoWriter, warnWriter io.Writer
 	var err error

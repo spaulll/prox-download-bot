@@ -3,8 +3,8 @@ package telegram
 import (
 	"DownloadBot/internal/config"
 	"DownloadBot/internal/ytdlp"
-	logger "DownloadBot/tool/zap"
 	"DownloadBot/tool/typeTrans"
+	logger "DownloadBot/tool/zap"
 	"fmt"
 	"path/filepath"
 	"strings"

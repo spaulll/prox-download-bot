@@ -24,12 +24,12 @@ func TestNormalizeName(t *testing.T) {
 
 func TestSanitizeFolderName(t *testing.T) {
 	cases := map[string]string{
-		"Show: Subtitle":       "Show - Subtitle",
-		`A*B?C"D<E>F|G`:        "ABCDEFG",
-		"trailing...dots...":   "trailing...dots",
-		"  spaced   out  ":     "spaced out",
-		"path/slash\\test":     "pathslashtest",
-		"Anime: The Rise: X":   "Anime - The Rise - X",
+		"Show: Subtitle":     "Show - Subtitle",
+		`A*B?C"D<E>F|G`:      "ABCDEFG",
+		"trailing...dots...": "trailing...dots",
+		"  spaced   out  ":   "spaced out",
+		"path/slash\\test":   "pathslashtest",
+		"Anime: The Rise: X": "Anime - The Rise - X",
 	}
 	for in, want := range cases {
 		if got := SanitizeFolderName(in); got != want {
@@ -74,15 +74,15 @@ func TestIsEpisode(t *testing.T) {
 
 func TestExtractSeason(t *testing.T) {
 	cases := map[string]int{
-		"Show.S04E06.mkv":       4,
-		"Show.s4e6.mkv":         4,
-		"Show.4x06.mkv":         4,
-		"Show.s04.e06.mkv":      4,
-		"Show.S01E01.720p.mkv":  1,
-		"Mousetrap.S01.480p":    1,
-		"Show.S12E03.mkv":       12,
-		"The.Matrix.1999.mkv":   0,
-		"Random.Show.mkv":       0,
+		"Show.S04E06.mkv":      4,
+		"Show.s4e6.mkv":        4,
+		"Show.4x06.mkv":        4,
+		"Show.s04.e06.mkv":     4,
+		"Show.S01E01.720p.mkv": 1,
+		"Mousetrap.S01.480p":   1,
+		"Show.S12E03.mkv":      12,
+		"The.Matrix.1999.mkv":  0,
+		"Random.Show.mkv":      0,
 	}
 	for in, want := range cases {
 		if got := ExtractSeason(in); got != want {
@@ -93,11 +93,11 @@ func TestExtractSeason(t *testing.T) {
 
 func TestExtractEpisode(t *testing.T) {
 	cases := map[string]int{
-		"Show.S04E06.mkv":  6,
-		"Show.4x06.mkv":    6,
-		"Show.E05.mkv":     5,
-		"Show.S01E12.mkv":  12,
-		"No.Episode.mkv":   0,
+		"Show.S04E06.mkv": 6,
+		"Show.4x06.mkv":   6,
+		"Show.E05.mkv":    5,
+		"Show.S01E12.mkv": 12,
+		"No.Episode.mkv":  0,
 	}
 	for in, want := range cases {
 		if got := ExtractEpisode(in); got != want {
@@ -109,10 +109,10 @@ func TestExtractEpisode(t *testing.T) {
 func TestCleanEpisodeFileName(t *testing.T) {
 	cases := map[string]string{
 		"Some.Show.S02E04.1080p.x264.Hindi.Korean.English.Msubs.RG.mkv": "Some.Show.S02E04.mkv",
-		"Mousetrap.S01E01.480p.x264.mkv":                                                  "Mousetrap.S01E01.mkv",
-		"Show.1x05.1080p.mkv":                                                             "Show.1x05.mkv",
-		"Attack.on.Titan.S04E05.1080p.BluRay.x265.mkv":                                    "Attack.on.Titan.S04E05.mkv",
-		"Show.S02E04.mkv":                                                                 "Show.S02E04.mkv",
+		"Mousetrap.S01E01.480p.x264.mkv":                                                 "Mousetrap.S01E01.mkv",
+		"Show.1x05.1080p.mkv":                                                            "Show.1x05.mkv",
+		"Attack.on.Titan.S04E05.1080p.BluRay.x265.mkv":                                   "Attack.on.Titan.S04E05.mkv",
+		"Show.S02E04.mkv":                                                                "Show.S02E04.mkv",
 	}
 	for in, want := range cases {
 		if got := CleanEpisodeFileName(in); got != want {
@@ -124,9 +124,9 @@ func TestCleanEpisodeFileName(t *testing.T) {
 func TestCleanSeasonPackName(t *testing.T) {
 	cases := map[string]string{
 		"Mousetrap.S01.480p.x264.Hindi.Korean.English.Msubs.RG": "Mousetrap",
-		"Some.Show.S02":                                              "Some show",
-		"Show.Name.S01E01-E05.1080p":                                       "Show Name",
-		"One Piece S05 1080p BluRay":                                       "One Piece",
+		"Some.Show.S02":        "Some show",
+		"Show.Name.S01E01-E05.1080p": "Show Name",
+		"One Piece S05 1080p BluRay": "One Piece",
 	}
 	for in, want := range cases {
 		if got := CleanSeasonPackName(in); got != want {
@@ -137,9 +137,9 @@ func TestCleanSeasonPackName(t *testing.T) {
 
 func TestTitleCase(t *testing.T) {
 	cases := map[string]string{
-		"some show":  "Some Show",
+		"some show":   "Some Show",
 		"the legend of hei": "The Legend Of Hei",
-		"mousetrap":        "Mousetrap",
+		"mousetrap":         "Mousetrap",
 	}
 	for in, want := range cases {
 		if got := TitleCase(in); got != want {

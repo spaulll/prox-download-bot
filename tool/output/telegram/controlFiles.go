@@ -13,7 +13,7 @@ import (
 	"strings"
 )
 
-//FileControlChan is a channel for controlling files,including deleting files, copying files, uploading files
+// FileControlChan is a channel for controlling files,including deleting files, copying files, uploading files
 var FileControlChan = make(chan string, 3)
 
 // removeFilesPrint is a function that deletes files
@@ -220,7 +220,7 @@ func getAllFile(pathname string) ([][]string, int64) {
 	return res, totalSize
 }
 
-//generateFolderTree is a function that generate the directory tree and can give the file actually selected by the user according to the user's choice.
+// generateFolderTree is a function that generate the directory tree and can give the file actually selected by the user according to the user's choice.
 // @return a Tree, all file name, true or false selected according to all file of order num, list of paths for all files to be deleted
 func generateFolderTree(pathname string, boot int, fileSelect map[int]bool, selectFileIndex string, parentSelected int8) (goTree.Tree, [][]string, map[int]bool, []string) {
 	index := boot

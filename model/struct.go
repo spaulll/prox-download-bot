@@ -14,7 +14,7 @@ type Config struct {
 			UserID string `json:"user-id"`
 		} `json:"telegram"`
 	} `json:"output"`
-	MaxIndex int `json:"max-index"`
+	MaxIndex int    `json:"max-index"`
 	Language string `json:"language"`
 
 	// DownloadFolder is the folder aria2 downloads into
@@ -36,7 +36,7 @@ type OrganizeConfig struct {
 	// AniList enables AniList lookups for anime confirmation
 	AniList bool `json:"anilist"`
 	// DeleteArchive deletes the original archive after successful extraction
-	DeleteArchive bool `json:"deleteArchive"`
+	DeleteArchive bool   `json:"deleteArchive"`
 	Movies        string `json:"movies"`
 	Series        string `json:"series"`
 	Anime         string `json:"anime"`

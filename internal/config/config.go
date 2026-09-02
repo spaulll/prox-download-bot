@@ -57,7 +57,7 @@ func GetAria2Key() string {
 	return info.Input.Aria2.Aria2Key
 }
 
-//OutputToolMethod is the type of tool used to judge the output, and 0 is telegram,-1 is unconfirmed output
+// OutputToolMethod is the type of tool used to judge the output, and 0 is telegram,-1 is unconfirmed output
 func OutputToolMethod() int {
 	if info.Output.Telegram.UserID != "" {
 		return 0
@@ -65,7 +65,7 @@ func OutputToolMethod() int {
 	return -1
 }
 
-//InputToolMethod is the type of tool used to judge the input, and 0 is aria2,-1 is unconfirmed input
+// InputToolMethod is the type of tool used to judge the input, and 0 is aria2,-1 is unconfirmed input
 func InputToolMethod() int {
 	if info.Input.Aria2.Aria2Key != "" {
 		return 0
@@ -81,7 +81,7 @@ func GetTelegramUserID() string {
 	return info.Output.Telegram.UserID
 }
 
-//GetMaxIndex is the maximum number of shows
+// GetMaxIndex is the maximum number of shows
 func GetMaxIndex() int {
 	return info.MaxIndex
 }

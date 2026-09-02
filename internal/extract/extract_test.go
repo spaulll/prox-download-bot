@@ -81,9 +81,9 @@ func TestZipSlipProtection(t *testing.T) {
 
 func TestMultiVolumeDetection(t *testing.T) {
 	cases := []struct {
-		path     string
-		isFirst  bool
-		prefix   string
+		path    string
+		isFirst bool
+		prefix  string
 	}{
 		{"Show.part1.rar", true, "Show"},
 		{"Show.part01.rar", true, "Show"},

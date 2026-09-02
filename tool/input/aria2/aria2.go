@@ -10,9 +10,9 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"path/filepath"
 	"regexp"
 	"strconv"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -264,12 +264,11 @@ func (a Aria2) FormatTellStoppedFiltered(allow map[string]bool) string {
 	return formatTellSomethingFiltered(info, err, allow)
 }
 
-//
 // FormatGidAndName
-//  @Description: Provide formatted GID and name according to method
-//  @param method int "0: active, 1: waiting"
-//  @return []map[string]string
 //
+//	@Description: Provide formatted GID and name according to method
+//	@param method int "0: active, 1: waiting"
+//	@return []map[string]string
 func (a Aria2) FormatGidAndName(method int) []map[string]string {
 	return a.FormatGidAndNameFiltered(method, nil)
 }
