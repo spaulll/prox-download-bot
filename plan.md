@@ -17,16 +17,16 @@ Work in phases. Update todos after every task. Short keyword-style commits.
 **Goal:** Fresh history, zero Chinese/Taiwanese content, no old docs/imgs.
 
 ### Todo
-- [ ] Clone / use existing DownloadBot source
-- [ ] `rm -rf .git`
-- [ ] Delete: `README.md`, `docs/`, `img/`, unnecessary files
-- [ ] Strip **all** Chinese / Mandarin / Traditional Chinese comments, strings, and i18n packs (keep English only)
-- [ ] Remove cloud-upload related code (OneDrive, Google Drive, Mega, etc.)
-- [ ] Keep `LICENSE` (Apache-2.0) and add proper attribution
-- [ ] `git init`
-- [ ] `git config user.name "spaulll"`
-- [ ] `git remote add origin https://github.com/spaulll/prox-download-bot.git`
-- [ ] First commit: `init: clean slate from DownloadBot`
+- [x] Clone / use existing DownloadBot source
+- [x] `rm -rf .git`
+- [x] Delete: `README.md`, `docs/`, `img/`, unnecessary files
+- [x] Strip **all** Chinese / Mandarin / Traditional Chinese comments, strings, and i18n packs (keep English only)
+- [x] Remove cloud-upload related code (OneDrive, Google Drive, Mega, etc.)
+- [x] Keep `LICENSE` (Apache-2.0) and add proper attribution
+- [x] `git init`
+- [x] `git config user.name "spaulll"`
+- [x] `git remote add origin https://github.com/spaulll/prox-download-bot.git`
+- [x] First commit: `init: clean slate from DownloadBot`
 
 **Commit keywords:** `init:`, `chore: remove chinese`, `chore: drop cloud upload`, `chore: drop docs imgs`
 
