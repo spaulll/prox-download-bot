@@ -74,7 +74,7 @@ media
 ├── anime
 │   └── Anime Show
 │       └── Season 3
-│           └── Anime.Show..S03E01.mkv
+│           └── Anime.Show.S03E01.mkv
 ├── music
 ├── documents
 ├── archives
@@ -158,7 +158,7 @@ WantedBy=multi-user.target
 
 **Live download (auto-appears when a download starts):**
 ```
-Filename: Some.Show.S01.720p.RG.zip
+Filename: Some.Show.S01.720p.zip
 [●●●○○○○○○○○○○] 23.45 %
 Downloaded: 607.06 MB of 2.59 GB
 Speed: 8.80 MB/s
@@ -183,7 +183,7 @@ ETA: 6m 41s
 ✅ All done!
 
 📦 Archive processed
-Some.Show.S01.720p.RG.zip
+Some.Show.S01.720p.zip
 
 🗂 Result
 • 10 episodes moved

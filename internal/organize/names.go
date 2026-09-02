@@ -19,7 +19,7 @@ var (
 	seasonPackCut = regexp.MustCompile(`(?i)\bs[0-9]{1,2}\b.*`)
 	seasonOnlyRe  = regexp.MustCompile(`(?i)\bs[0-9]{1,2}\b`)
 	xeCut         = regexp.MustCompile(`(?i)\b[0-9]{1,2}x[0-9]{1,3}\b.*`)
-	tagCut        = regexp.MustCompile(`(?i)\b(720p|1080p|2160p|480p|360p|4k|uhd|bluray|blu-ray|bdrip|bd|brrip|webrip|web-dl|webdl|web|hdtv|dvdrip|dvdscr|x264|x265|h\.?264|h\.?265|hevc|avc|aac|ac3|eac3|dts|dtshd|truehd|atmos|hdr|hdr10|dolby|vision|10bit|8bit|remux|extended|repack|proper|remastered|unrated|dual|audio|sub|subs|msubs|esubs|subbed|dubbed|hindi|korean|japanese|chinese|taiwanese|mandarin|english|org|netflix|amzn|nf|dsnp|hulu|hmax|max|pc|rip)\b.*`)
+	tagCut        = regexp.MustCompile(`(?i)\b(720p|1080p|2160p|480p|360p|4k|uhd|bluray|blu-ray|bdrip|bd|brrip|webrip|web-dl|webdl|web|hdtv|dvdrip|dvdscr|x264|x265|h\.?264|h\.?265|hevc|avc|aac|ac3|eac3|dts|dtshd|truehd|atmos|hdr|hdr10|dolby|vision|10bit|8bit|remux|extended|repack|proper|remastered|unrated|dual|audio|sub|subs|msubs|esubs|subbed|dubbed|hindi|korean|japanese|chinese|taiwanese|mandarin|english|RG|org|netflix|amzn|nf|dsnp|hulu|hmax|max|pc|rip)\b.*`)
 	spaceRe       = regexp.MustCompile(`\s+`)
 	episodeRe     = regexp.MustCompile(`(?i)\b(s[0-9]{1,2}[._ -]?e[0-9]{1,3}|[0-9]{1,2}x[0-9]{1,3}|e[0-9]{1,3}(?:\b|\.[a-z0-9]{2,4}$))`)
 	seRe          = regexp.MustCompile(`(?i)\bs([0-9]{1,2})[._ -]?e[0-9]{1,3}\b`)
@@ -84,7 +84,7 @@ func NormalizeName(name string) string {
 	return strings.TrimSpace(s)
 }
 
-// TitleCase converts "some show" to "Some Show"
+// TitleCase converts "Some Show" to "Some Show"
 func TitleCase(s string) string {
 	words := strings.Fields(s)
 	for i, w := range words {
@@ -194,7 +194,7 @@ func CleanSeasonPackName(name string) string {
 	s = yearBareRe.ReplaceAllString(s, "")
 	s = spaceRe.ReplaceAllString(s, " ")
 	s = strings.TrimSpace(s)
-	// release names often leave a dangling separator ("Anime Show-")
+	// release names often leave a dangling separator ("Anime Show")
 	s = strings.TrimRight(s, "-_~ ")
 	return s
 }

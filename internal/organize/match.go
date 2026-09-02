@@ -25,6 +25,8 @@ func (m FolderMatcher) Find(target string) string {
 	if err != nil {
 		return ""
 	}
+	// normalize the target so raw-case queries still match
+	target = NormalizeName(target)
 	bestPath := ""
 	bestScore := 0
 	for _, e := range entries {

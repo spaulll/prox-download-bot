@@ -124,7 +124,7 @@ func TestCleanEpisodeFileName(t *testing.T) {
 func TestCleanSeasonPackName(t *testing.T) {
 	cases := map[string]string{
 		"Mousetrap.S01.480p.x264.Hindi.Korean.English.Msubs.RG": "Mousetrap",
-		"Some.Show.S02":        "Some show",
+		"Some.Show.S02":        "Some Show",
 		"Show.Name.S01E01-E05.1080p": "Show Name",
 		"One Piece S05 1080p BluRay": "One Piece",
 	}
@@ -137,7 +137,7 @@ func TestCleanSeasonPackName(t *testing.T) {
 
 func TestTitleCase(t *testing.T) {
 	cases := map[string]string{
-		"some show":   "Some Show",
+		"Some Show":   "Some Show",
 		"the legend of hei": "The Legend Of Hei",
 		"mousetrap":         "Mousetrap",
 	}
@@ -169,11 +169,11 @@ func TestFolderMatcher(t *testing.T) {
 	}
 	m := FolderMatcher{Root: root}
 
-	if got := m.Find("some show"); filepath_Base(got) != "Some Show" {
+	if got := m.Find("Some Show"); filepath_Base(got) != "Some Show" {
 		t.Errorf("exact match failed: %q", got)
 	}
-	// token overlap: "some show s02" should match "Some Show"
-	if got := m.Find("some show s02"); filepath_Base(got) != "Some Show" {
+	// token overlap: "Some Show s02" should match "Some Show"
+	if got := m.Find("Some Show s02"); filepath_Base(got) != "Some Show" {
 		t.Errorf("token match failed: %q", got)
 	}
 	// no confident match
