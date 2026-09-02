@@ -212,6 +212,12 @@ func (d *Downloader) Download(rawURL string, report Reporter) (*Result, error) {
 	if quality == "" {
 		quality = "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"
 	}
+	// without ffmpeg, only combined (muxed) formats can be used - separate
+	// video+audio streams would never be merged
+	mergeOK := hasFfmpeg()
+	if !mergeOK {
+		quality = "best[height<=1080]/best"
+	}
 
 	args := []string{
 		"-f", quality,
@@ -222,7 +228,7 @@ func (d *Downloader) Download(rawURL string, report Reporter) (*Result, error) {
 		"-o", filepath.Join(dir, "%(title)s.%(ext)s"),
 		"--print", "after_move:filepath",
 	}
-	if (d.Cfg.EmbedThumbnail || d.Cfg.EmbedMetadata) && hasFfmpeg() {
+	if (d.Cfg.EmbedThumbnail || d.Cfg.EmbedMetadata) && mergeOK {
 		if d.Cfg.EmbedMetadata {
 			args = append(args, "--embed-metadata", "--embed-chapters")
 		}
@@ -307,11 +313,18 @@ func (d *Downloader) Download(rawURL string, report Reporter) (*Result, error) {
 		Service:  firstNonEmpty(info.ExtractorKey, "Other"),
 		Duration: time.Since(start),
 	}
+	// only report files that actually exist (a failed merge prints the
+	// expected final path but leaves only fragments behind)
+	var verified []string
 	for _, f := range files {
-		if s, err := os.Stat(f); err == nil {
+		if s, err := os.Stat(f); err == nil && !s.IsDir() {
+			verified = append(verified, f)
 			res.SizeBytes += s.Size()
+		} else {
+			d.log("expected file missing after download: %s", f)
 		}
 	}
+	res.Files = verified
 	return res, nil
 }
 

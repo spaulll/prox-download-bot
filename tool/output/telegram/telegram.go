@@ -6,6 +6,7 @@ import (
 	"DownloadBot/tool/displayUtil/gotree"
 	"DownloadBot/tool/input"
 	"DownloadBot/tool/monitor"
+	"DownloadBot/internal/ytdlp"
 	"DownloadBot/tool/typeTrans"
 	logger "DownloadBot/tool/zap"
 	"fmt"
@@ -309,7 +310,14 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 					go copyFilesPrint(update.Message.MessageID, bot)
 					FileControlChan <- "file"
 				default:
-					if !input.ToolApp.Aria2.Download(update.Message.Text) {
+					text := update.Message.Text
+					switch {
+					case ytdlp.IsKnownSite(text):
+						// yt-dlp compatible site -> dedicated handler
+						go startYtdlpDownload(bot, update.Message.Chat.ID, text)
+					case input.ToolApp.Aria2.Download(text):
+						// direct link handled by aria2
+					default:
 						msg.Text = i18nLoc.LocText("unknownLink")
 					}
 					if update.Message.Document != nil {

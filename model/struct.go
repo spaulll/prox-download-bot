@@ -52,4 +52,10 @@ type OrganizeConfig struct {
 	YtdlpPath string `json:"ytdlpPath"`
 	// YtdlpQuality is the yt-dlp format selector (default: 1080p + best audio)
 	YtdlpQuality string `json:"ytdlpQuality"`
+	// YtdlpCookies is the path to a cookies.txt file for yt-dlp
+	YtdlpCookies string `json:"ytdlpCookies"`
+	// YtdlpProxy is a proxy URL for yt-dlp
+	YtdlpProxy string `json:"ytdlpProxy"`
+	// YtdlpEmbed embeds metadata + thumbnail (needs ffmpeg)
+	YtdlpEmbed bool `json:"ytdlpEmbed"`
 }
