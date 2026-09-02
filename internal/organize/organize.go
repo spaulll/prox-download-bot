@@ -314,3 +314,13 @@ func reportFn(r Reporter, p Progress) {
 		r(p)
 	}
 }
+
+// MoveToMovies moves any file into the movies category (public helper).
+func (o *Organizer) MoveToMovies(srcPath string) {
+	o.moveTo(srcPath, o.Paths.Movies, &Result{})
+}
+
+// MoveToArchives moves the archive file into the archives category.
+func (o *Organizer) MoveToArchives(srcPath string) {
+	o.moveTo(srcPath, o.Paths.Archives, &Result{})
+}

@@ -142,6 +142,13 @@ func runOrganize(bot *tgBotApi.BotAPI, chatID int64, srcPath, displayName string
 	}
 
 	org := buildOrganizer()
+
+	// archive -> extraction pipeline (extract, then re-run organize)
+	if organize.IsArchive(srcPath) {
+		go runArchivePipeline(bot, chatID, org, srcPath, displayName)
+		return
+	}
+
 	report := makeOrganizeReporter(bot, chatID, "🔍 Analyzing content")
 
 	var (
