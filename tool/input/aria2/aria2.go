@@ -111,7 +111,22 @@ func (a Aria2) Close() {
 }
 
 func formatTellSomething(info []rpc2.StatusInfo, err error) string {
+	return formatTellSomethingFiltered(info, err, nil)
+}
+
+// formatTellSomethingFiltered formats task info; when allow is non-nil only
+// tasks whose gid is in the set are shown (per-user scoping).
+func formatTellSomethingFiltered(info []rpc2.StatusInfo, err error, allow map[string]bool) string {
 	dropErr(err)
+	if allow != nil {
+		filtered := make([]rpc2.StatusInfo, 0, len(info))
+		for _, item := range info {
+			if allow[item.Gid] {
+				filtered = append(filtered, item)
+			}
+		}
+		info = filtered
+	}
 	//log.Printf("%+v\n\n", info)
 	res := ""
 	var statusFlag = map[string]string{"active": i18nLoc.LocText("active"), "paused": i18nLoc.LocText("paused"), "complete": i18nLoc.LocText("complete"), "removed": i18nLoc.LocText("removed")}
@@ -235,6 +250,20 @@ func (a Aria2) FormatTellStopped() string {
 	return formatTellSomething(aria2Rpc.TellStopped(0, config.GetMaxIndex()))
 }
 
+// FormatTellActiveFiltered shows only the given gids (regular users).
+func (a Aria2) FormatTellActiveFiltered(allow map[string]bool) string {
+	info, err := aria2Rpc.TellActive()
+	return formatTellSomethingFiltered(info, err, allow)
+}
+func (a Aria2) FormatTellWaitingFiltered(allow map[string]bool) string {
+	info, err := aria2Rpc.TellWaiting(0, config.GetMaxIndex())
+	return formatTellSomethingFiltered(info, err, allow)
+}
+func (a Aria2) FormatTellStoppedFiltered(allow map[string]bool) string {
+	info, err := aria2Rpc.TellStopped(0, config.GetMaxIndex())
+	return formatTellSomethingFiltered(info, err, allow)
+}
+
 //
 // FormatGidAndName
 //  @Description: Provide formatted GID and name according to method
@@ -242,19 +271,31 @@ func (a Aria2) FormatTellStopped() string {
 //  @return []map[string]string
 //
 func (a Aria2) FormatGidAndName(method int) []map[string]string {
+	return a.FormatGidAndNameFiltered(method, nil)
+}
+
+// FormatGidAndNameFiltered lists gid+name, optionally restricted to a set.
+func (a Aria2) FormatGidAndNameFiltered(method int, allow map[string]bool) []map[string]string {
 	var info []rpc2.StatusInfo
 	var err error
 	switch method {
 	case 0:
 		info, err = aria2Rpc.TellActive()
-		break
 	case 1:
 		info, err = aria2Rpc.TellWaiting(0, config.GetMaxIndex())
-		break
 	default:
 		logger.Panic("method error")
 	}
 	dropErr(err)
+	if allow != nil {
+		filtered := make([]rpc2.StatusInfo, 0, len(info))
+		for _, item := range info {
+			if allow[item.Gid] {
+				filtered = append(filtered, item)
+			}
+		}
+		info = filtered
+	}
 
 	m := make([]map[string]string, 0)
 	//log.Printf("%+v\n", info)
@@ -320,22 +361,31 @@ func tellName(gid string) string {
 	return Name
 }
 
-func (a Aria2) Download(uri string) bool {
+// Download adds a uri/torrent to aria2. Returns the gid on success.
+func (a Aria2) Download(uri string) (string, bool) {
 	uriType := isDownloadType(uri)
 	if uriType == 0 {
-		return false
+		return "", false
 	}
 	uriData := make([]string, 0)
 	uriData = append(uriData, uri)
 	switch uriType {
-	case 1:
-		aria2Rpc.AddURI(uriData)
-	case 2:
-		aria2Rpc.AddURI(uriData)
+	case 1, 2:
+		gid, err := aria2Rpc.AddURI(uriData)
+		if err != nil || gid == "" {
+			logger.Error("addUri failed: %v", err)
+			return "", false
+		}
+		return gid, true
 	case 3:
-		aria2Rpc.AddTorrent(uri)
+		gid, err := aria2Rpc.AddTorrent(uri)
+		if err != nil || gid == "" {
+			logger.Error("addTorrent failed: %v", err)
+			return "", false
+		}
+		return gid, true
 	}
-	return true
+	return "", false
 }
 
 // FormatTMFiles is a function that can format the file information of torrent/magnet file, the return value is [][2]string,0 is file name,1 is file size

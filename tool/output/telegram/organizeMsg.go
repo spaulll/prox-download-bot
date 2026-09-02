@@ -132,9 +132,10 @@ func organizeChatID() int64 {
 
 // runOrganize executes the organize pipeline for a completed download and
 // drives the live Telegram progress messages. Runs asynchronously.
-func runOrganize(bot *tgBotApi.BotAPI, chatID int64, srcPath, displayName string) {
+func runOrganize(bot *tgBotApi.BotAPI, chatID int64, gid, srcPath, displayName string) {
 	// plan-style "Download completed" message
 	sendPlain(bot, chatID, fmt.Sprintf("✅ Download completed\n\n%s", displayName))
+	notifyUserTaskDone(gid, displayName)
 
 	cfg := config.GetOrganizeConfig()
 	if !cfg.Enabled {
@@ -264,6 +265,6 @@ func handleDownloadComplete(events []rpc.Event) {
 			logger.Error("could not resolve download path for gid %s", gid)
 			return
 		}
-		runOrganize(activeBot, organizeChatID(), srcPath, name)
+		runOrganize(activeBot, organizeChatID(), gid, srcPath, name)
 	}()
 }

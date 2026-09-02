@@ -3,6 +3,7 @@ package telegram
 import (
 	i18nLoc "DownloadBot/i18n"
 	"DownloadBot/internal/config"
+	"DownloadBot/internal/users"
 	"DownloadBot/tool/displayUtil/gotree"
 	"DownloadBot/tool/input"
 	"DownloadBot/tool/monitor"
@@ -20,7 +21,6 @@ import (
 	"time"
 
 	tgBotApi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/wxnacy/wgo/arrays"
 )
 
 var deleteMes tgBotApi.DeleteMessageConfig = tgBotApi.DeleteMessageConfig{
@@ -79,6 +79,48 @@ var tBot *tgBotApi.BotAPI
 
 // activeBot is the running bot instance used by the organize pipeline
 var activeBot *tgBotApi.BotAPI
+
+// userStore persists approved/pending/denied bot users
+var userStore *users.Store
+
+// taskStore maps task ids to the user who added them
+var taskStore *users.TaskStore
+
+// adminIDs are the configured admin chat ids (config user-id, comma separated)
+var adminIDs []int64
+
+func initUsers() {
+	for _, part := range strings.Split(config.GetTelegramUserID(), ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		adminIDs = append(adminIDs, typeTrans.Str2Int64(part))
+	}
+	userStore = users.Open("users.json")
+	taskStore = users.NewTaskStore("tasks.json")
+	// ensure every configured admin exists as a user
+	for _, id := range adminIDs {
+		userStore.SetRole(id, users.RoleAdmin)
+	}
+}
+
+func isAdminID(id int64) bool {
+	for _, a := range adminIDs {
+		if a == id {
+			return true
+		}
+	}
+	return false
+}
+
+// notifyAdmin sends a message to the first configured admin chat.
+func notifyAdmin(text string) {
+	if len(adminIDs) == 0 || tBot == nil {
+		return
+	}
+	sendPlain(tBot, adminIDs[0], text)
+}
 
 func createKeyBoardRow(texts ...string) [][]tgBotApi.KeyboardButton {
 	Keyboards := make([][]tgBotApi.KeyboardButton, 0)
@@ -149,6 +191,7 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 	dropErr(err)
 	tBot = bot
 	activeBot = bot
+	initUsers()
 	bot.Debug = false
 	input.ToolApp.Aria2.Load(Notifier{}, func(gid string) {
 		TMSelectMessageChan <- gid
@@ -199,6 +242,26 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 			case "9":
 				FileControlChan <- task[0]
 				bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, i18nLoc.LocText("operationSuccess")))
+			case "20":
+				// approve user (admin only)
+				if isAdminID(update.CallbackQuery.From.ID) {
+					if parts := strings.Split(task[0], "~"); len(parts) == 2 {
+						id := typeTrans.Str2Int64(parts[1])
+						userStore.SetRole(id, users.RoleApproved)
+						bot.Send(tgBotApi.NewMessage(id, "✅ Your access has been approved!\nSend /start to begin."))
+						bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, "User approved"))
+					}
+				}
+			case "21":
+				// deny user (admin only)
+				if isAdminID(update.CallbackQuery.From.ID) {
+					if parts := strings.Split(task[0], "~"); len(parts) == 2 {
+						id := typeTrans.Str2Int64(parts[1])
+						userStore.SetRole(id, users.RoleDenied)
+						bot.Send(tgBotApi.NewMessage(id, "⛔ Your access request was denied."))
+						bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, "User denied"))
+					}
+				}
 			}
 
 			//fmt.Print(update)
@@ -209,7 +272,51 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 		if update.Message != nil { //
 			msg := tgBotApi.NewMessage(update.Message.Chat.ID, "")
 			msg.ParseMode = "Markdown"
-			if arrays.ContainsString(strings.Split(config.GetTelegramUserID(), ","), fmt.Sprint(update.Message.Chat.ID)) != -1 {
+			senderID := update.Message.From.ID
+			senderName := strings.TrimSpace(update.Message.From.FirstName + " " + update.Message.From.LastName)
+			senderUsername := update.Message.From.UserName
+
+			// /start approval flow: register user, notify admin on new requests
+			if update.Message.Command() == "start" {
+				role := userStore.UpsertStarted(senderID, senderUsername, senderName)
+				if isAdminID(senderID) {
+					// admins fall through to normal handling below
+				} else if role == users.RolePending && !userStore.Approved(senderID) {
+					name := senderName
+					if senderUsername != "" {
+						name = "@" + senderUsername
+					}
+					reqMsg := tgBotApi.NewMessage(adminIDs[0], fmt.Sprintf(
+						"👤 New user request\n\nID: `%d`\nName: %s\nUsername: %s\n\nApprove this user?",
+						senderID, name, senderUsername))
+					reqMsg.ReplyMarkup = tgBotApi.NewInlineKeyboardMarkup(
+						tgBotApi.NewInlineKeyboardRow(
+							tgBotApi.NewInlineKeyboardButtonData("✅ Approve", fmt.Sprintf("approve~%d:20", senderID)),
+							tgBotApi.NewInlineKeyboardButtonData("⛔ Deny", fmt.Sprintf("deny~%d:21", senderID)),
+						),
+					)
+					bot.Send(reqMsg)
+					msg.Text = "👋 Welcome! Your access request has been sent to the admin.\nYou will be notified when approved."
+					_, err := bot.Send(msg)
+					dropErr(err)
+					continue
+				} else if role == users.RoleDenied {
+					msg.Text = "⛔ Your access request was denied."
+					_, err := bot.Send(msg)
+					dropErr(err)
+					continue
+				}
+			}
+
+			if userStore.Approved(senderID) || isAdminID(senderID) {
+				// regular users only see their own tasks; admins see all
+				var allowGids map[string]bool
+				if !isAdminID(senderID) {
+					allowGids = map[string]bool{}
+					for _, t := range taskStore.ByUser(senderID) {
+						allowGids[t.GID] = true
+					}
+				}
 
 
 				switch update.Message.Text {
@@ -220,15 +327,14 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 					activeRefreshControl = a
 					go activeRefresh(update.Message.MessageID, bot, ticker, a)
 				case i18nLoc.LocText("nowWaiting"):
-					res := input.ToolApp.Aria2.FormatTellWaiting()
-					//res := aria2.FormatTellWaiting()
+					res := input.ToolApp.Aria2.FormatTellWaitingFiltered(allowGids)
 					if res != "" {
 						msg.Text = res
 					} else {
 						msg.Text = i18nLoc.LocText("noWaitingTask")
 					}
 				case i18nLoc.LocText("nowOver"):
-					res := input.ToolApp.Aria2.FormatTellStopped()
+					res := input.ToolApp.Aria2.FormatTellStoppedFiltered(allowGids)
 					if res != "" {
 						msg.Text = res
 					} else {
@@ -236,7 +342,7 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 					}
 				case i18nLoc.LocText("pauseTask"):
 					InlineKeyboards, text := createFilesInlineKeyBoardRow(filesInlineKeyboards{
-						GidAndName: input.ToolApp.Aria2.FormatGidAndName(0),
+						GidAndName: input.ToolApp.Aria2.FormatGidAndNameFiltered(0, allowGids),
 						Data:       "1",
 					})
 					if len(InlineKeyboards) != 0 {
@@ -254,7 +360,7 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 				case i18nLoc.LocText("resumeTask"):
 
 					InlineKeyboards, text := createFilesInlineKeyBoardRow(filesInlineKeyboards{
-						GidAndName: input.ToolApp.Aria2.FormatGidAndName(1),
+						GidAndName: input.ToolApp.Aria2.FormatGidAndNameFiltered(1, allowGids),
 						Data:       "2",
 					})
 					if len(InlineKeyboards) != 0 {
@@ -272,10 +378,10 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 				case i18nLoc.LocText("removeTask"):
 
 					InlineKeyboards, text := createFilesInlineKeyBoardRow(filesInlineKeyboards{
-						GidAndName: input.ToolApp.Aria2.FormatGidAndName(0),
+						GidAndName: input.ToolApp.Aria2.FormatGidAndNameFiltered(0, allowGids),
 						Data:       "3",
 					}, filesInlineKeyboards{
-						GidAndName: input.ToolApp.Aria2.FormatGidAndName(1),
+						GidAndName: input.ToolApp.Aria2.FormatGidAndNameFiltered(1, allowGids),
 						Data:       "3",
 					})
 					if len(InlineKeyboards) != 0 {
@@ -314,9 +420,29 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 					switch {
 					case ytdlp.IsKnownSite(text):
 						// yt-dlp compatible site -> dedicated handler
+						taskStore.Add(users.Task{
+							GID:    "yt" + fmt.Sprint(time.Now().UnixNano()),
+							UserID: senderID,
+							Link:   text,
+							Engine: "ytdlp",
+							Status: "downloading",
+						})
+						notifyUserAdded(senderID, senderUsername, text)
 						go startYtdlpDownload(bot, update.Message.Chat.ID, text)
-					case input.ToolApp.Aria2.Download(text):
-						// direct link handled by aria2
+					case isDownloadable(text):
+						gid, ok := input.ToolApp.Aria2.Download(text)
+						if ok {
+							taskStore.Add(users.Task{
+								GID:    gid,
+								UserID: senderID,
+								Link:   text,
+								Engine: "aria2",
+								Status: "downloading",
+							})
+							notifyUserAdded(senderID, senderUsername, text)
+						} else {
+							msg.Text = i18nLoc.LocText("unknownLink")
+						}
 					default:
 						msg.Text = i18nLoc.LocText("unknownLink")
 					}
@@ -330,7 +456,8 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 						defer out.Close()
 						_, err = io.Copy(out, resp.Body)
 						dropErr(err)
-						if input.ToolApp.Aria2.Download("temp.torrent") {
+						if gid, ok := input.ToolApp.Aria2.Download("temp.torrent"); ok {
+							_ = gid
 							msg.Text = ""
 						}
 					}
@@ -383,4 +510,41 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 		}
 	}
 	input.ToolApp.Aria2.Close()
+}
+
+// isDownloadable reports whether the text is an aria2-downloadable link.
+func isDownloadable(text string) bool {
+	return strings.Contains(text, "http://") || strings.Contains(text, "https://") ||
+		strings.Contains(text, "ftp://") || strings.HasPrefix(text, "magnet:?") ||
+		strings.HasSuffix(text, ".torrent")
+}
+
+// notifyUserAdded informs admins that a user added a task (plan style).
+func notifyUserAdded(senderID int64, senderUsername, link string) {
+	if isAdminID(senderID) {
+		return // admin's own tasks do not need notifications
+	}
+	name := "@" + senderUsername
+	if senderUsername == "" {
+		u, ok := userStore.Get(senderID)
+		if !ok || u.FullName == "" {
+			name = fmt.Sprintf("user %d", senderID)
+		} else {
+			name = u.FullName
+		}
+	}
+	notifyAdmin(fmt.Sprintf("👤 %s added a task\n🔗 %s", name, link))
+}
+
+// notifyUserTaskDone informs the task owner that their download finished.
+func notifyUserTaskDone(gid, name string) {
+	task, ok := taskStore.Get(gid)
+	if !ok || isAdminID(task.UserID) {
+		return
+	}
+	taskStore.SetStatus(gid, "completed")
+	if activeBot == nil {
+		return
+	}
+	sendPlain(activeBot, task.UserID, "✅ Download completed\n\n"+name)
 }
