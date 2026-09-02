@@ -1,6 +1,6 @@
 package model
 
-// Config 是读入的配置文件的struct
+// Config is the struct of the loaded config file
 type Config struct {
 	Input struct {
 		Aria2 struct {

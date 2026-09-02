@@ -65,9 +65,8 @@ func CopyFiles(srcFiles []string, sendAutoUpdateMessage func(text string)) {
 			logger.DropErr(err)
 			defer file1.Close()
 			defer file2.Close()
-			//拷贝数据
 			bs := make([]byte, 1024, 1024)
-			n := -1 //读取的数据量
+			n := -1 // bytes read
 			total := 0
 			for {
 				n, err = file1.Read(bs)

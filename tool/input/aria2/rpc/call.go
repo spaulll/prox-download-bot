@@ -49,14 +49,14 @@ func newHTTPCaller(ctx context.Context, u *url.URL, timeout time.Duration, notif
 
 	if !strings.Contains(u.Host, "localhost") {
 		match, _ := regexp.MatchString(`[a-zA-Z]`, u.Host)
-		// 如果是域名
+		// if the host is a domain name
 		if match {
 			// xxxx:6800
 			h := strings.Split(u.Host, ":")
 
 			host, err := net.LookupHost(h[0])
 			if err != nil {
-				log.Printf("解析域名IP失败 %s", h[0])
+				log.Printf("failed to resolve domain IP: %s", h[0])
 
 			} else {
 				u.Host = host[0] + ":" + h[1]

@@ -263,7 +263,6 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 			msg.ParseMode = "Markdown"
 			if arrays.ContainsString(strings.Split(config.GetTelegramUserID(), ","), fmt.Sprint(update.Message.Chat.ID)) != -1 {
 
-				// 创建新的MessageConfig
 
 				switch update.Message.Text {
 				case i18nLoc.LocText("nowDownload"):
@@ -392,7 +391,7 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 					*/
 				}
 
-				// 从消息中提取命令。
+				// extract the command from the message
 				switch update.Message.Command() {
 				case "start":
 					msg.Text = fmt.Sprintf(i18nLoc.LocText("commandStartRes"), config.GetSign(), input.ToolApp.Aria2.GetVersion())

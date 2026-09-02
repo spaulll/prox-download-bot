@@ -12,13 +12,12 @@ import (
 
 var logger *zap.Logger
 
-// InitLog 初始化日志 logger
+// InitLog initializes the logger
 func InitLog(logPath, errPath string, level string, locText func(MessageIDs ...string) string) {
-	// 设置一些基本日志格式 具体含义还比较好理解，直接看zap源码也不难懂
 	config := zapcore.EncoderConfig{
 		MessageKey:  "msg",
 		LevelKey:    "level",
-		EncodeLevel: zapcore.CapitalLevelEncoder, //将级别转换成大写
+		EncodeLevel: zapcore.CapitalLevelEncoder, // capitalize level
 		TimeKey:     "ts",
 		EncodeTime: func(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
 			enc.AppendString(t.Format("2006-01-02 15:04:05"))
@@ -30,7 +29,6 @@ func InitLog(logPath, errPath string, level string, locText func(MessageIDs ...s
 		},
 	}
 	encoder := zapcore.NewConsoleEncoder(config)
-	// 设置级别
 	logLevel := zap.DebugLevel
 	switch level {
 	case "debug":
@@ -48,7 +46,6 @@ func InitLog(logPath, errPath string, level string, locText func(MessageIDs ...s
 	default:
 		logLevel = zap.InfoLevel
 	}
-	// 实现两个判断日志等级的interface  可以自定义级别展示
 	infoLevel := zap.LevelEnablerFunc(func(lvl zapcore.Level) bool {
 		return lvl < zapcore.WarnLevel && lvl >= logLevel
 	})
@@ -57,12 +54,11 @@ func InitLog(logPath, errPath string, level string, locText func(MessageIDs ...s
 		return lvl >= zapcore.WarnLevel && lvl >= logLevel
 	})
 
-	// 获取 info、warn日志文件的io.Writer 抽象 getWriter() 在下方实现
 
 	var zapCores []zapcore.Core
 	var infoWriter, warnWriter io.Writer
 	var err error
-	// 将info及以下写入logPath,  warn及以上写入errPath
+	// write info and below to logPath, warn and above to errPath
 	if logPath != "" {
 		infoWriter, err = getWriter(logPath)
 		zapCores = append(zapCores, zapcore.NewCore(encoder, zapcore.AddSync(infoWriter), infoLevel))
@@ -75,24 +71,21 @@ func InitLog(logPath, errPath string, level string, locText func(MessageIDs ...s
 		log.Println(locText("loggingSystemStartupException"))
 		panic(err)
 	}
-	//日志都会在console中展示
+	// all logs are also shown in the console
 	zapCores = append(zapCores, zapcore.NewCore(zapcore.NewConsoleEncoder(config),
 		zapcore.NewMultiWriteSyncer(zapcore.AddSync(os.Stdout)), logLevel))
 
-	// 最后创建具体的Logger
 	core := zapcore.NewTee(zapCores...)
 	logger = zap.New(core)
-	//logger = zap.New(core, zap.AddCaller(), zap.AddStacktrace(zap.WarnLevel)) // 需要传入 zap.AddCaller() 才会显示打日志点的文件名和行数, 有点小坑
 }
 
 func getWriter(filename string) (io.Writer, error) {
-	// 生成rotatelogs的Logger 实际生成的文件名 demo.log.YYmmddHH
-	// demo.log是指向最新日志的链接
+	// create a rotating writer; demo.log.YYmmddHH files, demo.log links to the latest
 	hook, err := rotateLogs.New(
-		filename+".%Y%m%d%H", // 没有使用go风格反人类的format格式
+		filename+".%Y%m%d%H",
 		rotateLogs.WithLinkName(filename),
-		rotateLogs.WithMaxAge(time.Hour*24*30),    // 保存30天
-		rotateLogs.WithRotationTime(time.Hour*24), //切割频率 24小时
+		rotateLogs.WithMaxAge(time.Hour*24*30),    // keep 30 days
+		rotateLogs.WithRotationTime(time.Hour*24), // rotate daily
 	)
 
 	return hook, err

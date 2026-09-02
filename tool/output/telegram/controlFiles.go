@@ -241,11 +241,11 @@ func generateFolderTree(pathname string, boot int, fileSelect map[int]bool, sele
 	bootSelect := int8(0)
 	if selectFileIndex == fmt.Sprint(boot) || parentSelected != 0 {
 		if fileSelect[boot] || parentSelected == -1 {
-			bootSelect = -1 // 其下皆不选
+			bootSelect = -1 // nothing below selected
 			trueFileSelect[boot] = false
 			artist = goTree.New(fmt.Sprintf("⬜%d:%s * %s", boot, path.Base(pathname), typeTrans.Byte2Readable(typeTrans.Str2Float64(fmt.Sprint(fmt.Sprint(totalSize))))))
 		} else {
-			bootSelect = 1 // 其下皆选
+			bootSelect = 1 // everything below selected
 			trueFileSelect[boot] = true
 			artist = goTree.New(fmt.Sprintf("✅%d:%s * %s", boot, path.Base(pathname), typeTrans.Byte2Readable(typeTrans.Str2Float64(fmt.Sprint(fmt.Sprint(totalSize))))))
 		}

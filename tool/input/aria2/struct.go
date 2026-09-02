@@ -54,5 +54,4 @@ func (Notifier) OnDownloadError(events []rpc.Event) {
 // OnBtDownloadComplete will be sent when a torrent download is complete but seeding is still going on. The event is the same struct as the event argument of onDownloadStart() method.
 func (Notifier) OnBtDownloadComplete(events []rpc.Event) {
 	logger.Info(i18nLoc.LocText("onBtDownloadCompleteDes"), events)
-	//SuddenMessageChan <- fmt.Sprintf("BT 任务 %s 已完成", events)
 }

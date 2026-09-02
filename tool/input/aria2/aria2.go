@@ -405,11 +405,11 @@ func (a Aria2) SelectBigFiles(gid string) []int {
 }
 
 const (
-	// 定义每分钟的秒数
+	// seconds per minute
 	SecondsPerMinute = 60
-	// 定义每小时的秒数
+	// seconds per hour
 	SecondsPerHour = SecondsPerMinute * 60
-	// 定义每天的秒数
+	// seconds per day
 	SecondsPerDay = SecondsPerHour * 24
 )
 
