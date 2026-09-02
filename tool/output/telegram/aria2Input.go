@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -35,8 +36,14 @@ func SuddenMessage(bot *tgBotApi.BotAPI) {
 		}
 		myID := typeTrans.Str2Int64(config.GetTelegramUserID())
 		msg := tgBotApi.NewMessage(myID, a)
-		if _, err := bot.Send(msg); err != nil {
+		res, err := bot.Send(msg)
+		if err != nil {
 			log.Panic(err)
+		}
+		// remember "Download started!" notices so they can be dropped when
+		// the task ends
+		if strings.HasSuffix(a, startedNoticeSuffix()) && strings.Contains(a, "started") {
+			rememberStartedNotice(gid, res.MessageID)
 		}
 	}
 }
@@ -459,13 +466,46 @@ func generateGoTree(m map[string]interface{}, index int, selectFileList *[][2]in
 type Notifier struct {
 }
 
+// startedNoticeSuffix is the localized tail of a "Download started!" notice.
+// Computed lazily - the localizer is not ready during package init.
+func startedNoticeSuffix() string {
+	return strings.TrimPrefix(i18nLoc.LocText("onDownloadStartDes"), "%s")
+}
+
+// startedNotices maps gid -> chat message id of its "Download started!" notice
+// so the notice can be removed once the task ends.
+var (
+	startedNoticesMu sync.Mutex
+	startedNotices   = map[string]int{}
+)
+
+func rememberStartedNotice(gid string, msgID int) {
+	if gid == "" || msgID <= 0 {
+		return
+	}
+	startedNoticesMu.Lock()
+	startedNotices[gid] = msgID
+	startedNoticesMu.Unlock()
+	inflightAdd(organizeChatID(), msgID)
+}
+
+// dropStartedNotice removes the "Download started!" notice of a finished task.
+func dropStartedNotice(gid string) {
+	if gid == "" {
+		return
+	}
+	startedNoticesMu.Lock()
+	msgID, ok := startedNotices[gid]
+	delete(startedNotices, gid)
+	startedNoticesMu.Unlock()
+	if ok {
+		deleteMessages(activeBot, organizeChatID(), msgID)
+	}
+}
+
 // OnDownloadStart will be sent when a download is started. The event is of type struct, and it contains following keys. The value type is string.
 func (Notifier) OnDownloadStart(events []rpc.Event) {
 	logger.Info(i18nLoc.LocText("onDownloadStartDes"), events)
-	/*name := make([]string, 0)
-	for _, file := range events {
-		name = append(name, tellName(aria2Rpc.TellStatus(file.Gid)))
-	}*/
 
 	SuddenMessageChan <- fmt.Sprintf(i18nLoc.LocText("onDownloadStartDes"), events)
 	aria2.TMMessageChan <- events[0].Gid
@@ -501,11 +541,18 @@ func (Notifier) OnDownloadPause(events []rpc.Event) {
 func (Notifier) OnDownloadStop(events []rpc.Event) {
 	logger.Info(i18nLoc.LocText("onDownloadStopDes"), events)
 	SuddenMessageChan <- fmt.Sprintf(i18nLoc.LocText("onDownloadStopDes"), events)
+	if len(events) > 0 {
+		dropStartedNotice(events[0].Gid)
+	}
 }
 
 // OnDownloadComplete will be sent when a download is complete. For BitTorrent downloads, this notification is sent when the download is complete and seeding is over. The event is the same struct of the event argument of onDownloadStart() method.
 func (Notifier) OnDownloadComplete(events []rpc.Event) {
 	logger.Info(i18nLoc.LocText("onDownloadCompleteDes"), events)
+	if len(events) > 0 {
+		aria2.MarkFinished(events[0].Gid)
+		dropStartedNotice(events[0].Gid)
+	}
 	handleDownloadComplete(events)
 }
 
@@ -513,9 +560,16 @@ func (Notifier) OnDownloadComplete(events []rpc.Event) {
 func (Notifier) OnDownloadError(events []rpc.Event) {
 	logger.Info(i18nLoc.LocText("onDownloadErrorDes"), events)
 	SuddenMessageChan <- fmt.Sprintf(i18nLoc.LocText("onDownloadErrorDes"), events)
+	if len(events) > 0 {
+		dropStartedNotice(events[0].Gid)
+	}
 }
 
 // OnBtDownloadComplete will be sent when a torrent download is complete but seeding is still going on. The event is the same struct as the event argument of onDownloadStart() method.
 func (Notifier) OnBtDownloadComplete(events []rpc.Event) {
 	logger.Info(i18nLoc.LocText("onBtDownloadCompleteDes"), events)
+	if len(events) > 0 {
+		aria2.MarkFinished(events[0].Gid)
+		dropStartedNotice(events[0].Gid)
+	}
 }

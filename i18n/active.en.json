@@ -31,7 +31,7 @@
   "complete": "Completed",
   "removed": "Removed",
   "queryInformationFormat1": "*Filename:* `%s`\n`%s`\n*Downloaded:* %s *of* %s\n*Threads:* %s\n*GID:* `%s`",
-  "queryInformationFormat2": "*Filename:* `%s`\n*Status:* %s\n`%s`\n*Downloaded:* %s *of* %s\n*Threads:* %s\n*GID:* `%s`",
+  "queryInformationFormat2": "*Filename:* `%s`\n*Status:* %s\n`%s`\n*Downloaded:* %s *of* %s\n*Threads:* %s\n*GID:* `%s`\n*Finished:* %s",
   "queryInformationFormat3": "*Filename:* `%s`\n`%s`\n*Downloaded:* %s *of* %s\n*Speed:* %s/s\n*ETA:* %s\n*Threads:* %s\n*GID:* `%s`",
   "queryInformationBTFormat3": "*Filename:* `%s`\n`%s`\n*Downloaded:* %s *of* %s\n*Speed:* %s/s\n*ETA:* %s\n*Seeders:* %s *&* *Peers:* %s\n*GID:* `%s`",
   "ResumeAll": "Resume All",

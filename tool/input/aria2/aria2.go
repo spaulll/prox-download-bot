@@ -175,7 +175,8 @@ func formatTellSomethingFiltered(info []rpc2.StatusInfo, err error, allow map[st
 				res += fmt.Sprintf(i18nLoc.LocText("queryInformationFormat1"), m["Name"], m["Progress"], m["CompletedLength"], m["Size"], m["Threads"], m["GID"])
 			} else if Files.Status == "complete" || Files.Status == "removed" {
 				//res += fmt.Sprintf(locText("queryInformationFormat2"), m["GID"], m["Name"], m["Status"], m["Progress"], m["Size"])
-				res += fmt.Sprintf(i18nLoc.LocText("queryInformationFormat2"), m["Name"], m["Status"], m["Progress"], m["CompletedLength"], m["Size"], m["Threads"], m["GID"])
+				m["Finished"] = formatFinishedAt(FinishedAt(Files.Gid))
+				res += fmt.Sprintf(i18nLoc.LocText("queryInformationFormat2"), m["Name"], m["Status"], m["Progress"], m["CompletedLength"], m["Size"], m["Threads"], m["GID"], m["Finished"])
 			} else {
 				//res += fmt.Sprintf(locText("queryInformationFormat3"), m["GID"], m["Name"], m["Progress"], m["Size"], m["Speed"])
 				res += fmt.Sprintf(i18nLoc.LocText("queryInformationBTFormat3"), m["Name"], m["Progress"], m["CompletedLength"], m["Size"], m["Speed"], m["remainingTime"], m["Seeders"], m["Peers"], m["GID"])
@@ -221,7 +222,7 @@ func formatTellSomethingFiltered(info []rpc2.StatusInfo, err error, allow map[st
 					res += fmt.Sprintf(i18nLoc.LocText("queryInformationFormat1"), m["Name"], m["Progress"], m["CompletedLength"], m["Size"], m["Threads"], m["GID"])
 				} else if Files.Status == "complete" || Files.Status == "removed" {
 					//res += fmt.Sprintf(locText("queryInformationFormat2"), m["GID"], m["Name"], m["Status"], m["Progress"], m["Size"])
-					res += fmt.Sprintf(i18nLoc.LocText("queryInformationFormat2"), m["Name"], m["Status"], m["Progress"], m["CompletedLength"], m["Size"], m["Threads"], m["GID"])
+					res += fmt.Sprintf(i18nLoc.LocText("queryInformationFormat2"), m["Name"], m["Status"], m["Progress"], m["CompletedLength"], m["Size"], m["Threads"], m["GID"], formatFinishedAt(FinishedAt(Files.Gid)))
 				} else {
 					//res += fmt.Sprintf(locText("queryInformationFormat3"), m["GID"], m["Name"], m["Progress"], m["Size"], m["Speed"])
 					res += fmt.Sprintf(i18nLoc.LocText("queryInformationFormat3"), m["Name"], m["Progress"], m["CompletedLength"], m["Size"], m["Speed"], m["remainingTime"], m["Threads"], m["GID"])
@@ -248,7 +249,7 @@ func (a Aria2) FormatTellWaiting() string {
 	return formatTellSomething(aria2Rpc.TellWaiting(0, config.GetMaxIndex()))
 }
 func (a Aria2) FormatTellStopped() string {
-	return formatTellSomething(aria2Rpc.TellStopped(0, config.GetMaxIndex()))
+	return formatTellSomething(recentStopped(config.GetMaxIndex()), nil)
 }
 
 // FormatTellActiveFiltered shows only the given gids (regular users).
@@ -261,8 +262,46 @@ func (a Aria2) FormatTellWaitingFiltered(allow map[string]bool) string {
 	return formatTellSomethingFiltered(info, err, allow)
 }
 func (a Aria2) FormatTellStoppedFiltered(allow map[string]bool) string {
-	info, err := aria2Rpc.TellStopped(0, config.GetMaxIndex())
-	return formatTellSomethingFiltered(info, err, allow)
+	return formatTellSomethingFiltered(recentStopped(config.GetMaxIndex()), nil, allow)
+}
+
+// recentStopped fetches a wide window of stopped tasks, drops the
+// meaningless 0-byte placeholder entries, and returns the newest n
+// (TellStopped returns oldest first - reverse for a sensible history).
+// TellStopped(0, maxIndex) alone would pin the list to the OLDEST entries,
+// making the history appear frozen once that many tasks accumulate.
+func recentStopped(n int) []rpc2.StatusInfo {
+	info, err := aria2Rpc.TellStopped(0, 1000)
+	if err != nil {
+		return nil
+	}
+	filtered := make([]rpc2.StatusInfo, 0, len(info))
+	var junk []string
+	for _, t := range info {
+		if t.TotalLength == "0" && t.CompletedLength == "0" {
+			// placeholder/error leftovers - drop them from aria2 for good
+			if t.Status == "error" || t.Status == "removed" {
+				junk = append(junk, t.Gid)
+			}
+			continue
+		}
+		filtered = append(filtered, t)
+	}
+	if len(junk) > 0 {
+		go func() {
+			for _, gid := range junk {
+				_, _ = aria2Rpc.RemoveDownloadResult(gid)
+			}
+		}()
+	}
+	// newest first
+	for i, j := 0, len(filtered)-1; i < j; i, j = i+1, j-1 {
+		filtered[i], filtered[j] = filtered[j], filtered[i]
+	}
+	if n > 0 && len(filtered) > n {
+		filtered = filtered[:n]
+	}
+	return filtered
 }
 
 // StoppedTasks returns aria2's recent stopped/completed downloads (raw).
@@ -273,6 +312,34 @@ func (a Aria2) StoppedTasks() []rpc2.StatusInfo {
 		return nil
 	}
 	return info
+}
+
+// finishedAt tracks when a download finished (aria2 does not expose it).
+var finishedAt sync.Map // gid -> time.Time
+
+// markFinished records the completion time of a gid.
+func markFinished(gid string) {
+	finishedAt.Store(gid, time.Now())
+}
+
+// MarkFinished is the exported hook for the notifier to record completion.
+func MarkFinished(gid string) { markFinished(gid) }
+
+// FinishedAt returns the recorded completion time of a gid (zero if unknown).
+func FinishedAt(gid string) time.Time {
+	if v, ok := finishedAt.Load(gid); ok {
+		t, _ := v.(time.Time)
+		return t
+	}
+	return time.Time{}
+}
+
+// formatFinishedAt renders a completion time for the history view.
+func formatFinishedAt(t time.Time) string {
+	if t.IsZero() {
+		return "-"
+	}
+	return t.Format("02 Jan, 15:04")
 }
 
 // FormatGidAndName
