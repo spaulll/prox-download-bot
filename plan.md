@@ -61,16 +61,16 @@ Work in phases. Update todos after every task. Short keyword-style commits.
 - Accurate progress bar updates to Telegram during organize
 
 ### Todo
-- [ ] Create `internal/organize/` package
-- [ ] Port normalize / sanitize / extract_season / is_episode
-- [ ] Port find_series_folder / find_anime_folder
-- [ ] Category router
-- [ ] Hook into Aria2 download-complete event
-- [ ] Configurable library base path
-- [ ] Real-time progress reporting (percent + current step)
-- [ ] Logging of every decision / move
-- [ ] Unit tests for name parsing & matching
-- [ ] Commits:  
+- [x] Create `internal/organize/` package
+- [x] Port normalize / sanitize / extract_season / is_episode
+- [x] Port find_series_folder / find_anime_folder
+- [x] Category router
+- [x] Hook into Aria2 download-complete event
+- [x] Configurable library base path
+- [x] Real-time progress reporting (percent + current step)
+- [x] Logging of every decision / move
+- [x] Unit tests for name parsing & matching
+- [x] Commits:  
   `feat: organize core`  
   `feat: series season detect`  
   `feat: anime anilist`  
