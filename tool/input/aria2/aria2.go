@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -142,7 +143,7 @@ func formatTellSomethingFiltered(info []rpc2.StatusInfo, err error, allow map[st
 			completedLength, err := strconv.ParseFloat(Files.CompletedLength, 64)
 			dropErr(err)
 			m["CompletedLength"] = typeTrans.Byte2Readable(completedLength)
-			m["Progress"] = printProgressBar(completedLength * 100.0 / bytes)
+			m["Progress"] = printProgressBar(progressPercent(completedLength, bytes))
 			m["Threads"] = "-"
 			m["Seeders"] = Files.NumSeeders
 			m["Peers"] = Files.Connections
@@ -193,7 +194,7 @@ func formatTellSomethingFiltered(info []rpc2.StatusInfo, err error, allow map[st
 				completedLength, err := strconv.ParseFloat(Files.CompletedLength, 64)
 				dropErr(err)
 				m["CompletedLength"] = typeTrans.Byte2Readable(completedLength)
-				m["Progress"] = printProgressBar(completedLength * 100.0 / bytes)
+				m["Progress"] = printProgressBar(progressPercent(completedLength, bytes))
 				m["Threads"] = fmt.Sprint(len(File.URIs))
 				downloadSpeed, err := strconv.ParseFloat(Files.DownloadSpeed, 64)
 				dropErr(err)
@@ -469,15 +470,34 @@ func resolveTime(seconds int) (day int, hour int, minute int, second int) {
 	return
 }
 
-// printProgressBar renders the plan-mandated progress bar: ▰▰▰▰▰▰▰▱▱▱ 70%
+// progressPercent computes a safe download percentage, avoiding division by
+// zero and NaN/Inf results when total is 0 (common for stopped/removed tasks).
+func progressPercent(completed, total float64) float64 {
+	if total <= 0 || completed < 0 {
+		return 0
+	}
+	p := completed * 100.0 / total
+	if p < 0 {
+		return 0
+	}
+	if p > 100 {
+		return 100
+	}
+	return p
+}
+
+// printProgressBar renders the original 13-segment bar: [●●●●●●●○○○○○○] 12.34 %
 func printProgressBar(progress float64) string {
+	if math.IsNaN(progress) || math.IsInf(progress, 0) {
+		progress = 0
+	}
 	if progress < 0 {
 		progress = 0
 	}
 	if progress > 100 {
 		progress = 100
 	}
-	const total = 10
+	const total = 13
 	filled := int(progress / (100.0 / float64(total)))
 	if progress > 0 && filled == 0 {
 		filled = 1
@@ -485,12 +505,8 @@ func printProgressBar(progress float64) string {
 	if progress >= 100 {
 		filled = total
 	}
-	bar := strings.Repeat("▰", filled) + strings.Repeat("▱", total-filled)
-	pct := int(progress)
-	if progress > 0 && pct == 0 {
-		pct = 1
-	}
-	return bar + " " + strconv.Itoa(pct) + "%"
+	return "[" + strings.Repeat("●", filled) + strings.Repeat("○", total-filled) + "] " +
+		strconv.FormatFloat(progress, 'f', 2, 64) + " %"
 }
 
 func isDownloadType(uri string) int {
