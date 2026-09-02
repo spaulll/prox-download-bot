@@ -419,20 +419,28 @@ func resolveTime(seconds int) (day int, hour int, minute int, second int) {
 	return
 }
 
+// printProgressBar renders the plan-mandated progress bar: ▰▰▰▰▰▰▰▱▱▱ 70%
 func printProgressBar(progress float64) string {
-	progressBar := "["
-	if progress != 100 {
-		for i := 0; i < int(progress/7.7); i++ {
-			progressBar += "●"
-		}
-		for i := 0; i < 13-int(progress/7.7); i++ {
-			progressBar += "○"
-		}
-	} else {
-		progressBar += "●●●●●●●●●●●●●"
+	if progress < 0 {
+		progress = 0
 	}
-	progressBar += "] " + strconv.FormatFloat(progress, 'f', 2, 64) + " %"
-	return progressBar
+	if progress > 100 {
+		progress = 100
+	}
+	const total = 10
+	filled := int(progress / (100.0 / float64(total)))
+	if progress > 0 && filled == 0 {
+		filled = 1
+	}
+	if progress >= 100 {
+		filled = total
+	}
+	bar := strings.Repeat("▰", filled) + strings.Repeat("▱", total-filled)
+	pct := int(progress)
+	if progress > 0 && pct == 0 {
+		pct = 1
+	}
+	return bar + " " + strconv.Itoa(pct) + "%"
 }
 
 func isDownloadType(uri string) int {
