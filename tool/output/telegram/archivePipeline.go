@@ -51,6 +51,7 @@ func runArchivePipeline(bot *tgBotApi.BotAPI, chatID int64, org *organize.Organi
 
 	// "Extracting" live progress
 	var lastUpdate time.Time
+	extractStart := time.Now()
 	progress := func(i extract.Info) {
 		if time.Since(lastUpdate) < time.Second {
 			return
@@ -63,6 +64,9 @@ func runArchivePipeline(bot *tgBotApi.BotAPI, chatID int64, org *organize.Organi
 			lines += "\n" + fmt.Sprintf("Extracted: %s of %s",
 				typeTrans.Byte2Readable(float64(i.BytesDone)),
 				typeTrans.Byte2Readable(float64(i.BytesTotal)))
+			if eta := remainingETA(extractStart, i.BytesDone, i.BytesTotal); eta > 0 {
+				lines += "\nETA: " + formatDuration(eta)
+			}
 		}
 		if i.Total > 1 && i.Total != 100 {
 			lines += "\n" + fmt.Sprintf("%d/%d files", i.Done, i.Total)

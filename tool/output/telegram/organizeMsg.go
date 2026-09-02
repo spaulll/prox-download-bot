@@ -138,6 +138,23 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%dh %dm %ds", minutes/60, minutes%60, seconds)
 }
 
+// remainingETA estimates time left from average throughput so far.
+// Returns 0 when there is nothing meaningful to estimate yet.
+func remainingETA(start time.Time, done, total int64) time.Duration {
+	if done <= 0 || total <= 0 || done >= total {
+		return 0
+	}
+	elapsed := time.Since(start)
+	if elapsed < 2*time.Second {
+		return 0
+	}
+	rate := float64(done) / elapsed.Seconds()
+	if rate <= 0 {
+		return 0
+	}
+	return time.Duration(float64(total-done)/rate) * time.Second
+}
+
 // organizeChatID returns the admin chat id for bot messages.
 func organizeChatID() int64 {
 	return typeTrans.Str2Int64(config.GetTelegramUserID())
