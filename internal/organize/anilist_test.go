@@ -77,3 +77,15 @@ func TestAniListCaseInsensitiveMatch(t *testing.T) {
 		t.Errorf("unexpected title %q", r.Title)
 	}
 }
+
+func TestAniListTrailingDashMatch(t *testing.T) {
+	// release name artifacts ("Anime.Show." -> "Anime Show-") must
+	// still match the clean AniList title
+	r := IsAnimeAnilist("Anime Show-", fakePost(200, anilistBody(21507, "Anime Show", "Anime Show")))
+	if !r.IsAnime {
+		t.Errorf("expected match for trailing-dash query, got %+v", r)
+	}
+	if r.Title != "Anime Show" {
+		t.Errorf("unexpected canonical title %q", r.Title)
+	}
+}

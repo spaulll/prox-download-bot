@@ -148,6 +148,8 @@ func startYtdlpDownload(bot *tgBotApi.BotAPI, chatID int64, rawURL string) {
 	)
 	if live != nil {
 		live.Update(text)
+		// the live message became the final summary - keep it, untrack it
+		inflightRemove(live.ID())
 	} else {
 		sendPlain(bot, chatID, text)
 	}

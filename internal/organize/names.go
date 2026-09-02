@@ -194,6 +194,8 @@ func CleanSeasonPackName(name string) string {
 	s = yearBareRe.ReplaceAllString(s, "")
 	s = spaceRe.ReplaceAllString(s, " ")
 	s = strings.TrimSpace(s)
+	// release names often leave a dangling separator ("Anime Show-")
+	s = strings.TrimRight(s, "-_~ ")
 	return s
 }
 

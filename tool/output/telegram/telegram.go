@@ -195,6 +195,8 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 	bot.Debug = false
 	// sweep crashed-run staging dirs before aria2 can deliver new events
 	recoverCleanupStages()
+	// delete progress messages left over from a crashed run
+	inflightCleanup(bot)
 	input.ToolApp.Aria2.Load(Notifier{}, func(gid string) {
 		TMSelectMessageChan <- gid
 	}, false)

@@ -137,6 +137,7 @@ func resumeUnprocessedArchives() {
 	if resumed > 0 {
 		id := sendPlain(activeBot, organizeChatID(),
 			fmt.Sprintf("🔄 Recovery\n\nBot restarted mid-organize\n→ Resuming %d archive(s) from the previous run", resumed))
+		inflightAdd(organizeChatID(), id)
 		recoveryNoticeID = id
 	}
 }

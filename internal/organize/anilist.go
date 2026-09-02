@@ -66,12 +66,38 @@ func IsAnimeAnilist(queryName string, doPost func(url string, body string, timeo
 		canonical = romajiTitle
 	}
 
-	// exact substring verification
-	searchLower := strings.ToLower(queryName)
-	if strings.Contains(strings.ToLower(englishTitle), searchLower) ||
-		strings.Contains(strings.ToLower(romajiTitle), searchLower) {
+	// fuzzy containment check: normalize both sides (lowercase, separators
+	// to spaces) so release-name artifacts like "Anime.Show." still
+	// match the clean title "Anime Show"
+	if titlesMatch(queryName, englishTitle) || titlesMatch(queryName, romajiTitle) {
 		return AniListResult{IsAnime: true, Title: canonical}
 	}
 	// AniList returned a closest guess that is not actually the show
 	return AniListResult{IsAnime: false}
+}
+
+// titlesMatch reports whether a release-name-derived query refers to the
+// same show as an AniList title. Normalizes both to lowercase with
+// separators as spaces, then accepts contiguous containment in either
+// direction (the query may carry extra markers like a trailing dash, or the
+// title may carry a subtitle).
+func titlesMatch(query, title string) bool {
+	q, t := normalizeTitle(query), normalizeTitle(title)
+	if q == "" || t == "" {
+		return false
+	}
+	return strings.Contains(t, q) || strings.Contains(q, t)
+}
+
+// normalizeTitle lowercases and turns separators into single spaces so
+// release names and clean titles become comparable strings.
+func normalizeTitle(s string) string {
+	s = strings.Map(func(r rune) rune {
+		switch r {
+		case '_', '.', '-', ':', '\'', '!', '(', ')', '[', ']', ',':
+			return ' '
+		}
+		return r
+	}, s)
+	return strings.Join(strings.Fields(strings.ToLower(s)), " ")
 }

@@ -34,6 +34,8 @@ func NewOrganizeProgressMsg(bot *tgBotApi.BotAPI, chatID int64, text string) *Or
 		logger.Error("send organize message failed: %v", err)
 		return nil
 	}
+	// track for cleanup if the process dies mid-run
+	inflightAdd(chatID, res.MessageID)
 	return &OrganizeProgressMsg{bot: bot, chatID: chatID, messageID: res.MessageID}
 }
 
@@ -56,6 +58,15 @@ func (m *OrganizeProgressMsg) Delete() {
 	if _, err := m.bot.Request(tgBotApi.NewDeleteMessage(m.chatID, m.messageID)); err != nil {
 		logger.Debug("delete organize message failed: %v", err)
 	}
+	inflightRemove(m.messageID)
+}
+
+// ID returns the underlying Telegram message ID.
+func (m *OrganizeProgressMsg) ID() int {
+	if m == nil {
+		return 0
+	}
+	return m.messageID
 }
 
 // segmentBar renders the 13-segment float bar used across all bot messages:
@@ -175,6 +186,7 @@ func organizeChatID() int64 {
 func runOrganize(bot *tgBotApi.BotAPI, chatID int64, gid, srcPath, displayName string) {
 	// plan-style "Download completed" message (deleted once organizing ends)
 	completedMsg := sendPlain(bot, chatID, fmt.Sprintf("✅ Download completed\n\n%s", displayName))
+	inflightAdd(chatID, completedMsg)
 	notifyUserTaskDone(gid, displayName)
 
 	cfg := config.GetOrganizeConfig()
@@ -234,6 +246,7 @@ func deleteMessages(bot *tgBotApi.BotAPI, chatID int64, ids ...int) {
 		if _, err := bot.Request(tgBotApi.NewDeleteMessage(chatID, id)); err != nil {
 			logger.Debug("delete message failed: %v", err)
 		}
+		inflightRemove(id)
 	}
 }
 
