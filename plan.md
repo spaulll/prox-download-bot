@@ -128,15 +128,15 @@ Work in phases. Update todos after every task. Short keyword-style commits.
 - After download → place into the structure above (do **not** run through movies/series/anime organizer)
 
 ### Todo
-- [ ] Integrate yt-dlp (binary or Go wrapper)
-- [ ] Detect yt-dlp-compatible links vs Aria2 links
-- [ ] Handler for all yt-dlp supported sites
-- [ ] Default: 1080p + best audio + embed metadata/thumbnail
-- [ ] Live progress bar from yt-dlp → Telegram
-- [ ] Build correct folder structure (YouTube vs other services)
-- [ ] Sanitize all special characters in names
-- [ ] Config: quality, embed, cookies, proxy, base paths, etc.
-- [ ] Commits: `feat: ytdlp` / `feat: ytdlp progress` / `feat: ytdlp structure` / `feat: ytdlp sanitize`
+- [x] Integrate yt-dlp (binary or Go wrapper)
+- [x] Detect yt-dlp-compatible links vs Aria2 links
+- [x] Handler for all yt-dlp supported sites
+- [x] Default: 1080p + best audio + embed metadata/thumbnail
+- [x] Live progress bar from yt-dlp → Telegram
+- [x] Build correct folder structure (YouTube vs other services)
+- [x] Sanitize all special characters in names
+- [x] Config: quality, embed, cookies, proxy, base paths, etc.
+- [x] Commits: `feat: ytdlp` / `feat: ytdlp progress` / `feat: ytdlp structure` / `feat: ytdlp sanitize`
 
 ---
 
