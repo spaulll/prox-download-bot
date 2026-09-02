@@ -48,6 +48,16 @@ func (m *OrganizeProgressMsg) Update(text string) {
 	}
 }
 
+// Delete removes the progress message (cleanup after task success).
+func (m *OrganizeProgressMsg) Delete() {
+	if m == nil {
+		return
+	}
+	if _, err := m.bot.Send(tgBotApi.NewDeleteMessage(m.chatID, m.messageID)); err != nil {
+		logger.Debug("delete organize message failed: %v", err)
+	}
+}
+
 // segmentBar renders the 13-segment float bar used across all bot messages:
 // [●●●○○○○○○○○○○] 12.34 %
 func segmentBar(percent float64) string {
@@ -163,8 +173,8 @@ func organizeChatID() int64 {
 // runOrganize executes the organize pipeline for a completed download and
 // drives the live Telegram progress messages. Runs asynchronously.
 func runOrganize(bot *tgBotApi.BotAPI, chatID int64, gid, srcPath, displayName string) {
-	// plan-style "Download completed" message
-	sendPlain(bot, chatID, fmt.Sprintf("✅ Download completed\n\n%s", displayName))
+	// plan-style "Download completed" message (deleted once organizing ends)
+	completedMsg := sendPlain(bot, chatID, fmt.Sprintf("✅ Download completed\n\n%s", displayName))
 	notifyUserTaskDone(gid, displayName)
 
 	cfg := config.GetOrganizeConfig()
@@ -176,11 +186,11 @@ func runOrganize(bot *tgBotApi.BotAPI, chatID int64, gid, srcPath, displayName s
 
 	// archive -> extraction pipeline (extract, then re-run organize)
 	if organize.IsArchive(srcPath) {
-		go runArchivePipeline(bot, chatID, org, srcPath, displayName)
+		go runArchivePipeline(bot, chatID, org, srcPath, displayName, completedMsg)
 		return
 	}
 
-	report := makeOrganizeReporter(bot, chatID, "🔍 Analyzing content")
+	report, cleanup := makeOrganizeReporter(bot, chatID, "🔍 Analyzing content")
 
 	var (
 		res *organize.Result
@@ -197,20 +207,38 @@ func runOrganize(bot *tgBotApi.BotAPI, chatID int64, gid, srcPath, displayName s
 		sendPlain(bot, chatID, "⚠️ Organize failed: "+err.Error())
 		return
 	}
+	// success: wipe intermediates, keep only the final summary
+	cleanup()
+	deleteMessages(bot, chatID, completedMsg)
 	sendOrganizeSummary(bot, chatID, displayName, res)
 }
 
-// sendPlain sends a simple message.
-func sendPlain(bot *tgBotApi.BotAPI, chatID int64, text string) {
+// sendPlain sends a simple message, returning its message ID (0 on failure).
+func sendPlain(bot *tgBotApi.BotAPI, chatID int64, text string) int {
 	msg := tgBotApi.NewMessage(chatID, text)
-	if _, err := bot.Send(msg); err != nil {
+	res, err := bot.Send(msg)
+	if err != nil {
 		logger.Error("send message failed: %v", err)
+		return 0
+	}
+	return res.MessageID
+}
+
+// deleteMessages removes messages by ID (0 IDs are skipped).
+func deleteMessages(bot *tgBotApi.BotAPI, chatID int64, ids ...int) {
+	for _, id := range ids {
+		if id == 0 {
+			continue
+		}
+		if _, err := bot.Send(tgBotApi.NewDeleteMessage(chatID, id)); err != nil {
+			logger.Debug("delete message failed: %v", err)
+		}
 	}
 }
 
 // makeOrganizeReporter builds a Reporter that renders the plan-style
-// "Analyzing + moving" live message.
-func makeOrganizeReporter(bot *tgBotApi.BotAPI, chatID int64, stepTitle string) organize.Reporter {
+// "Analyzing + moving" live message, plus a cleanup func that deletes it.
+func makeOrganizeReporter(bot *tgBotApi.BotAPI, chatID int64, stepTitle string) (organize.Reporter, func()) {
 	var live *OrganizeProgressMsg
 	var lastText string
 	var lastSend time.Time
@@ -236,7 +264,7 @@ func makeOrganizeReporter(bot *tgBotApi.BotAPI, chatID int64, stepTitle string) 
 			lastSend = time.Now()
 			lastText = text
 		}
-	}
+	}, func() { live.Delete() }
 }
 
 // sendOrganizeSummary posts the final detailed summary (plan style).

@@ -131,11 +131,23 @@ func resumeUnprocessedArchives() {
 		logger.Info("recovery: resuming unprocessed archive %s", path)
 		go func(src, displayName string) {
 			org := buildOrganizer()
-			runArchivePipeline(activeBot, organizeChatID(), org, src, displayName)
+			runArchivePipeline(activeBot, organizeChatID(), org, src, displayName, popRecoveryNotice())
 		}(path, name)
 	}
 	if resumed > 0 {
-		sendPlain(activeBot, organizeChatID(),
+		id := sendPlain(activeBot, organizeChatID(),
 			fmt.Sprintf("🔄 Recovery\n\nBot restarted mid-organize\n→ Resuming %d archive(s) from the previous run", resumed))
+		recoveryNoticeID = id
 	}
+}
+
+// recoveryNoticeID is the "🔄 Recovery" notice sent at startup, deleted once
+// the resumed organize finishes so it does not linger in the chat.
+var recoveryNoticeID int
+
+// popRecoveryNotice returns the recovery notice message ID (once).
+func popRecoveryNotice() int {
+	id := recoveryNoticeID
+	recoveryNoticeID = 0
+	return id
 }
