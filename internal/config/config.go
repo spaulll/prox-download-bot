@@ -15,19 +15,19 @@ func dropErr(err error) {
 	}
 }
 
-func InitConfig(configPath string, clientSign string) {
+func InitConfig(configPath string) {
 	filePtr, err := os.Open(configPath)
 	dropErr(err)
 	defer filePtr.Close()
 	decoder := json.NewDecoder(filePtr)
 	err = decoder.Decode(&info)
 	dropErr(err)
-	if clientSign != "" {
-		info.Sign = clientSign
-	}
 }
 
 func GetLanguage() string {
+	if info.Language == "" {
+		return "en"
+	}
 	return info.Language
 }
 
@@ -44,8 +44,10 @@ func GetLogLevel() string {
 func GetDownloadFolder() string {
 	return info.DownloadFolder
 }
-func GetMoveFolder() string {
-	return info.MoveFolder
+
+// GetOrganizeConfig returns the media library configuration
+func GetOrganizeConfig() model.OrganizeConfig {
+	return info.Library
 }
 
 func GetAria2Server() string {
@@ -82,23 +84,4 @@ func GetTelegramUserID() string {
 //GetMaxIndex is the maximum number of shows
 func GetMaxIndex() int {
 	return info.MaxIndex
-}
-
-func GetSign() string {
-	return info.Sign
-}
-
-func IsServer() bool {
-	return info.Server.IsServer
-}
-
-func IsMasterServer() bool {
-	return info.Server.IsMasterServer
-}
-
-func GetServerIP() string {
-	return info.Server.ServerHost
-}
-func GetServerPort() int {
-	return info.Server.ServerPort
 }

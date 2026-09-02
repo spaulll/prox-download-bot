@@ -26,8 +26,6 @@ var TMMessageChan = make(chan string, 3)
 var TMAllowDownloads = make(map[string]int, 0)
 var ariaDisconnectionChan = *(rpc2.CreateAriaDisconnectionChan())
 
-var SuddenlyMsgChan = make(chan string, 3)
-
 type Aria2 struct {
 	Notifier rpc2.Notifier
 }

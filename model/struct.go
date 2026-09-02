@@ -14,20 +14,42 @@ type Config struct {
 			UserID string `json:"user-id"`
 		} `json:"telegram"`
 	} `json:"output"`
-	MaxIndex       int    `json:"max-index"`
-	Sign           string `json:"sign"`
-	Language       string `json:"language"`
+	MaxIndex int `json:"max-index"`
+	Language string `json:"language"`
+
+	// DownloadFolder is the folder aria2 downloads into
 	DownloadFolder string `json:"downloadFolder"`
-	MoveFolder     string `json:"moveFolder"`
-	Server         struct {
-		IsServer       bool   `json:"isServer"`
-		IsMasterServer bool   `json:"isMasterServer"`
-		ServerHost     string `json:"serverHost"`
-		ServerPort     int    `json:"serverPort"`
-	} `json:"server"`
+	// Library is the base path of the organized media library
+	Library OrganizeConfig `json:"organize"`
+
 	Log struct {
 		LogPath string `json:"logPath"`
 		ErrPath string `json:"errPath"`
 		Level   string `json:"level"`
 	} `json:"log"`
+}
+
+// OrganizeConfig holds the media library layout used by the organizer
+type OrganizeConfig struct {
+	// Enabled turns post-download organizing on/off
+	Enabled bool `json:"enabled"`
+	// AniList enables AniList lookups for anime confirmation
+	AniList bool `json:"anilist"`
+	// DeleteArchive deletes the original archive after successful extraction
+	DeleteArchive bool `json:"deleteArchive"`
+	Movies        string `json:"movies"`
+	Series        string `json:"series"`
+	Anime         string `json:"anime"`
+	Music         string `json:"music"`
+	Documents     string `json:"documents"`
+	Archives      string `json:"archives"`
+	Others        string `json:"others"`
+	// YouTube is the base path for yt-dlp YouTube downloads
+	YouTube string `json:"youtube"`
+	// Services is the base path for yt-dlp downloads from other services
+	Services string `json:"services"`
+	// YtdlpPath is the path to the yt-dlp binary
+	YtdlpPath string `json:"ytdlpPath"`
+	// YtdlpQuality is the yt-dlp format selector (default: 1080p + best audio)
+	YtdlpQuality string `json:"ytdlpQuality"`
 }

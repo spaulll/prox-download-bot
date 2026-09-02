@@ -1,48 +1,41 @@
 package controller
 
 import (
-	i18nLoc "DownloadBot/i18n"
 	"DownloadBot/internal/config"
 	logger "DownloadBot/tool/zap"
-	"fmt"
 	"io"
-	"io/ioutil"
 	"math/rand"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 )
 
 func RemoveFiles(deleteFiles []string) {
-	//removeContents(1, config.GetDownloadFolder(), fileSelect)
 	for _, removePath := range deleteFiles {
-		//log.Println(removePath)
 		if removePath != config.GetDownloadFolder() && removePath != config.GetDownloadFolder()+"/" {
 			err := os.RemoveAll(removePath)
 			logger.DropErr(err)
 		}
 	}
 }
+
+// CopyFiles copies files from the download folder to the same relative path in the library
 func CopyFiles(srcFiles []string, sendAutoUpdateMessage func(text string)) {
-	destPath := config.GetMoveFolder()
+	destPath := config.GetDownloadFolder()
 	downloadFolder := config.GetDownloadFolder()
-	if destPath[:len(destPath)-1] != "/" {
+	if !strings.HasSuffix(destPath, "/") {
 		destPath += "/"
 	}
-	if downloadFolder[:len(downloadFolder)-1] != "/" {
+	if !strings.HasSuffix(downloadFolder, "/") {
 		downloadFolder += "/"
 	}
 	newMsg := sendAutoUpdateMessage
 	for _, srcPath := range srcFiles {
 		if srcPath != config.GetDownloadFolder() && srcPath != config.GetDownloadFolder()+"/" {
-			newMsg(fmt.Sprintf(i18nLoc.LocText("copyingTo"), srcPath, destPath+path.Base(srcPath)))
-			//log.Println(srcPath)
 			file1, err := os.Open(srcPath)
 			logger.DropErr(err)
 			s, err := os.Stat(srcPath)
 			if err == nil {
-				//log.Println(strings.ReplaceAll(srcPath, downloadFolder, destPath))
 				if s.IsDir() {
 					_, err := os.Stat(strings.ReplaceAll(srcPath, downloadFolder, destPath))
 					if err != nil {
@@ -67,45 +60,17 @@ func CopyFiles(srcFiles []string, sendAutoUpdateMessage func(text string)) {
 			defer file2.Close()
 			bs := make([]byte, 1024, 1024)
 			n := -1 // bytes read
-			total := 0
 			for {
 				n, err = file1.Read(bs)
 				if err == io.EOF || n == 0 {
 					break
 				}
 				logger.DropErr(err)
-				total += n
 				_, err = file2.Write(bs[:n])
 			}
 		}
 	}
 	newMsg("close")
-}
-
-func CreateDriveInfoFolder(path string) {
-	_, err := os.Stat(path)
-	if err != nil {
-		err = os.MkdirAll(path, os.ModePerm)
-		logger.DropErr(err)
-	}
-
-}
-func GetAuthInfoJson(path string) ([]string, string, int) {
-	text := ""
-	files := make([]string, 0)
-	rd, err := ioutil.ReadDir(path)
-	logger.DropErr(err)
-	index := 1
-	for _, fi := range rd {
-		if !fi.IsDir() {
-			if strings.HasSuffix(strings.ToLower(fi.Name()), ".json") {
-				files = append(files, fi.Name())
-				text += fmt.Sprintf("%d.%s\n", index, fi.Name())
-				index++
-			}
-		}
-	}
-	return files, text, index
 }
 
 // RandStringRunes Generate random string

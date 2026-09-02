@@ -12,15 +12,23 @@
     }
   },
   "max-index": 10,
-  "sign": "Main Aria2",
   "language": "en",
-  "downloadFolder": "/root/download",
-  "moveFolder": "/root/upload",
-  "server": {
-    "isServer": true,
-    "isMasterServer": true,
-    "serverHost": "127.0.0.1",
-    "serverPort": 23369
+  "downloadFolder": "/root/downloads",
+  "organize": {
+    "enabled": true,
+    "anilist": true,
+    "deleteArchive": false,
+    "movies": "/media/movies",
+    "series": "/media/series",
+    "anime": "/media/anime",
+    "music": "/media/music",
+    "documents": "/media/documents",
+    "archives": "/media/archives",
+    "others": "/media/others",
+    "youtube": "/media/YouTube",
+    "services": "/media/Services",
+    "ytdlpPath": "yt-dlp",
+    "ytdlpQuality": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"
   },
   "log": {
     "logPath": "",

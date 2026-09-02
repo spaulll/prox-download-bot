@@ -13,7 +13,7 @@ import (
 var logger *zap.Logger
 
 // InitLog initializes the logger
-func InitLog(logPath, errPath string, level string, locText func(MessageIDs ...string) string) {
+func InitLog(logPath, errPath string, level string) {
 	config := zapcore.EncoderConfig{
 		MessageKey:  "msg",
 		LevelKey:    "level",
@@ -68,7 +68,7 @@ func InitLog(logPath, errPath string, level string, locText func(MessageIDs ...s
 		zapCores = append(zapCores, zapcore.NewCore(encoder, zapcore.AddSync(warnWriter), warnLevel))
 	}
 	if err != nil {
-		log.Println(locText("loggingSystemStartupException"))
+		log.Println("logging system startup exception")
 		panic(err)
 	}
 	// all logs are also shown in the console
