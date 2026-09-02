@@ -249,9 +249,21 @@ func handleDownloadComplete(events []rpc.Event) {
 		return
 	}
 	gid := events[0].Gid
-	srcPath, name := input.ToolApp.Aria2.DownloadedPath(gid)
-	if srcPath == "" {
-		return
-	}
-	go runOrganize(activeBot, organizeChatID(), srcPath, name)
+	go func() {
+		// resolve path with retries: the RPC connection may be busy right
+		// after the completion notification
+		var srcPath, name string
+		for attempt := 0; attempt < 5; attempt++ {
+			srcPath, name = input.ToolApp.Aria2.DownloadedPath(gid)
+			if srcPath != "" {
+				break
+			}
+			time.Sleep(3 * time.Second)
+		}
+		if srcPath == "" {
+			logger.Error("could not resolve download path for gid %s", gid)
+			return
+		}
+		runOrganize(activeBot, organizeChatID(), srcPath, name)
+	}()
 }

@@ -63,12 +63,12 @@ func disconnectionMonitoring(notifier rpc2.Notifier) {
 		if res == "websocket: close 1006 (abnormal closure): unexpected EOF" {
 			aria2Rpc.Close()
 			var err error
-			aria2Rpc, err = rpc2.New(context.Background(), config.GetAria2Server(), config.GetAria2Key(), time.Second*10, notifier)
+			aria2Rpc, err = rpc2.New(context.Background(), config.GetAria2Server(), config.GetAria2Key(), time.Second*30, notifier)
 			for err != nil {
 				log.Printf(i18nLoc.LocText("reconnectionFailed"), timeout, timeout)
 				time.Sleep(time.Second * time.Duration(timeout))
 				timeout++
-				aria2Rpc, err = rpc2.New(context.Background(), config.GetAria2Server(), config.GetAria2Key(), time.Second*10, notifier)
+				aria2Rpc, err = rpc2.New(context.Background(), config.GetAria2Server(), config.GetAria2Key(), time.Second*30, notifier)
 			}
 			version, err := aria2Rpc.GetVersion()
 			dropErr(err)
@@ -81,7 +81,7 @@ func disconnectionMonitoring(notifier rpc2.Notifier) {
 func (a Aria2) Load(notifier rpc2.Notifier, TMStop func(gid string), needWait bool) {
 	var err error
 	var wg sync.WaitGroup
-	aria2Rpc, err = rpc2.New(context.Background(), config.GetAria2Server(), config.GetAria2Key(), time.Second*10, notifier)
+	aria2Rpc, err = rpc2.New(context.Background(), config.GetAria2Server(), config.GetAria2Key(), time.Second*30, notifier)
 	if err != nil {
 		logger.Panic(i18nLoc.LocText("Aria2 RPC connection failed"))
 	}
@@ -484,9 +484,14 @@ func (a Aria2) GetVersion() string {
 
 // DownloadedPath resolves the on-disk path and display name of a completed
 // download. For torrents it returns the torrent root directory.
+// Returns empty strings on RPC failure (never panics - completion handling
+// must not take the bot down).
 func (a Aria2) DownloadedPath(gid string) (path string, name string) {
 	info, err := aria2Rpc.TellStatus(gid)
-	dropErr(err)
+	if err != nil {
+		logger.Error("tellStatus failed for %s: %v", gid, err)
+		return "", ""
+	}
 	if info.BitTorrent.Info.Name != "" {
 		for _, f := range info.Files {
 			if f.Path != "" {
