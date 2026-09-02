@@ -41,7 +41,7 @@ type anilistResponse struct {
 // guess, even for wrong matches).
 func IsAnimeAnilist(queryName string, doPost func(url string, body string, timeout time.Duration) (int, string)) AniListResult {
 	safeName := strings.ReplaceAll(queryName, `"`, `\"`)
-	query := fmt.Sprintf(`{"query":"{ Media(search:\\\"%s\\\", type:ANIME) { id title { romaji english } } }"}`, safeName)
+	query := fmt.Sprintf(`{"query":"{ Media(search:\"%s\", type:ANIME) { id title { romaji english } } }"}`, safeName)
 
 	httpCode, body := doPost(anilistURL, query, 10*time.Second)
 	if httpCode != 200 {
