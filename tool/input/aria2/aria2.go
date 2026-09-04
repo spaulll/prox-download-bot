@@ -38,6 +38,32 @@ func dropErr(err error) {
 	}
 }
 
+// autoPaused tracks torrent GIDs paused automatically for file selection so
+// the Telegram layer can skip the "paused" noise for them (manual pauses
+// still notify).
+var (
+	autoPausedMu sync.Mutex
+	autoPaused   = map[string]bool{}
+)
+
+// MarkAutoPaused records a picker auto-pause for gid.
+func MarkAutoPaused(gid string) {
+	autoPausedMu.Lock()
+	autoPaused[gid] = true
+	autoPausedMu.Unlock()
+}
+
+// TakeAutoPaused reports whether gid was auto-paused, consuming the mark.
+func TakeAutoPaused(gid string) bool {
+	autoPausedMu.Lock()
+	defer autoPausedMu.Unlock()
+	if autoPaused[gid] {
+		delete(autoPaused, gid)
+		return true
+	}
+	return false
+}
+
 func testTMStop(TMStop func(gid string)) {
 	for {
 		gid := <-TMMessageChan
@@ -52,6 +78,7 @@ func testTMStop(TMStop func(gid string)) {
 			}
 			//log.Printf("%+v\n", dlInfo)
 			if dlInfo.BitTorrent.Info.Name != "" {
+				MarkAutoPaused(gid)
 				aria2Rpc.Pause(gid)
 				TMStop(gid)
 			}
@@ -698,14 +725,15 @@ func (a Aria2) GetVersion() string {
 }
 
 // DownloadedPath resolves the on-disk path and display name of a completed
-// download. For torrents it returns the torrent root directory.
-// Returns empty strings on RPC failure (never panics - completion handling
-// must not take the bot down).
-func (a Aria2) DownloadedPath(gid string) (path string, name string) {
+// download. For torrents it returns the torrent root directory (multi-file)
+// or the file itself (single-file), plus isTorrent=true so callers can
+// apply torrent-only grouping. Returns empty strings on RPC failure (never
+// panics - completion handling must not take the bot down).
+func (a Aria2) DownloadedPath(gid string) (path string, name string, isTorrent bool) {
 	info, err := aria2Rpc.TellStatus(gid)
 	if err != nil {
 		logger.Error("tellStatus failed for %s: %v", gid, err)
-		return "", ""
+		return "", "", false
 	}
 	if info.BitTorrent.Info.Name != "" {
 		// single-file torrent: Files[0].Path is the file itself - return it
@@ -713,9 +741,9 @@ func (a Aria2) DownloadedPath(gid string) (path string, name string) {
 		// organizer walk the entire download root (data loss risk).
 		if len(info.Files) == 1 {
 			if info.Files[0].Path != "" {
-				return filepath.Clean(info.Files[0].Path), info.BitTorrent.Info.Name
+				return filepath.Clean(info.Files[0].Path), info.BitTorrent.Info.Name, true
 			}
-			return config.GetDownloadFolder(), info.BitTorrent.Info.Name
+			return config.GetDownloadFolder(), info.BitTorrent.Info.Name, true
 		}
 		for _, f := range info.Files {
 			if f.Path != "" {
@@ -723,17 +751,17 @@ func (a Aria2) DownloadedPath(gid string) (path string, name string) {
 				dl := filepath.Clean(config.GetDownloadFolder())
 				rel, rerr := filepath.Rel(dl, p)
 				if rerr == nil && rel != "." && strings.Contains(rel, string(filepath.Separator)) {
-					return filepath.Join(dl, strings.SplitN(rel, string(filepath.Separator), 2)[0]), info.BitTorrent.Info.Name
+					return filepath.Join(dl, strings.SplitN(rel, string(filepath.Separator), 2)[0]), info.BitTorrent.Info.Name, true
 				}
-				return dl, info.BitTorrent.Info.Name
+				return dl, info.BitTorrent.Info.Name, true
 			}
 		}
-		return config.GetDownloadFolder(), info.BitTorrent.Info.Name
+		return config.GetDownloadFolder(), info.BitTorrent.Info.Name, true
 	}
 	for _, f := range info.Files {
 		if f.Path != "" {
-			return filepath.Clean(f.Path), filepath.Base(f.Path)
+			return filepath.Clean(f.Path), filepath.Base(f.Path), false
 		}
 	}
-	return "", ""
+	return "", "", false
 }

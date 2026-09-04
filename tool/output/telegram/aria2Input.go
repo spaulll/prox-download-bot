@@ -615,6 +615,10 @@ func autoShowProgress() {
 // OnDownloadPause will be sent when a download is paused. The event is the same struct as the event argument of onDownloadStart() method.
 func (Notifier) OnDownloadPause(events []rpc.Event) {
 	logger.Info(i18nLoc.LocText("onDownloadPauseDes"), events)
+	if len(events) > 0 && aria2.TakeAutoPaused(events[0].Gid) {
+		// picker auto-pause for file selection, not a user action - no noise
+		return
+	}
 	SuddenMessageChan <- fmt.Sprintf(i18nLoc.LocText("onDownloadPauseDes"), events)
 }
 

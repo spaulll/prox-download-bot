@@ -125,3 +125,89 @@ func TestOrganizeDirectorySidecarsFollowOwnEpisode(t *testing.T) {
 		t.Errorf("E05 video/sub split: %q vs %q", ep5, sub5)
 	}
 }
+
+func TestCleanMovieFolderName(t *testing.T) {
+	cases := map[string]string{
+		"Example Movie (2024) [1080p] [WEBRip] [5.1] [DEMO]":     "Example Movie (2024)",
+		"Example.Movie.2024.1080p.WEBRip.x264.AAC5.1-DEMO.mp4": "Example Movie (2024)",
+		"Example Movie (2024)":                  "Example Movie (2024)",
+		"Sample.Film.2023.1080p.WEB-DL.mkv": "Sample Film (2023)",
+	}
+	for in, want := range cases {
+		if got := CleanMovieFolderName(in); got != want {
+			t.Errorf("CleanMovieFolderName(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if got := CleanMovieFolderName("2012"); got != "" {
+		t.Errorf("expected empty for year-only name, got %q", got)
+	}
+}
+
+// Non-episodic torrent dir: everything lands together in one movie folder.
+func TestOrganizeDirectoryGroupsRelease(t *testing.T) {
+	lib := t.TempDir()
+	src := filepath.Join(t.TempDir(), "Example.Movie.2024.1080p.WEBRip")
+	writeSidecarFile(t, filepath.Join(src, "Example.Movie.2024.1080p.WEBRip.mp4"), "video")
+	writeSidecarFile(t, filepath.Join(src, "Example.Movie.2024.1080p.WEBRip.srt"), "sub")
+	writeSidecarFile(t, filepath.Join(src, "cover.jpg"), "art")
+
+	res, err := sidecarOrganizer(lib).OrganizeDirectory(src, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Moved) != 3 {
+		t.Fatalf("expected 3 moved, got %d (%v)", len(res.Moved), res.Moved)
+	}
+	wantDir := filepath.Join(lib, "movies", "Example Movie (2024)")
+	for _, m := range res.Moved {
+		if filepath.Dir(m) != wantDir {
+			t.Errorf("expected everything in %s, got %s", wantDir, m)
+		}
+	}
+	if res.Category != CatMovies {
+		t.Errorf("expected category movies, got %q", res.Category)
+	}
+}
+
+// Single-file torrent movie: dedicated folder, not the category root.
+func TestOrganizeTorrentFileGroupsMovie(t *testing.T) {
+	lib := t.TempDir()
+	src := t.TempDir()
+	f := filepath.Join(src, "Sample.Film.2023.1080p.WEB-DL.mkv")
+	writeSidecarFile(t, f, "video")
+
+	res, err := sidecarOrganizer(lib).OrganizeTorrentFile(f, "Sample Film (2023) [1080p] [WEB-DL]", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Moved) != 1 {
+		t.Fatalf("expected 1 moved, got %v", res.Moved)
+	}
+	want := filepath.Join(lib, "movies", "Sample Film (2023)", "Sample.Film.2023.1080p.WEB-DL.mkv")
+	if res.Moved[0] != want {
+		t.Errorf("got %q, want %q", res.Moved[0], want)
+	}
+}
+
+// Single-file torrent episode: keeps series placement, no movie folder.
+func TestOrganizeTorrentFileKeepsSeriesPlacement(t *testing.T) {
+	lib := t.TempDir()
+	if err := makeDirs(filepath.Join(lib, "series"), "Some Show"); err != nil {
+		t.Fatal(err)
+	}
+	src := t.TempDir()
+	f := filepath.Join(src, "Some.Show.S02E04.1080p.mkv")
+	writeSidecarFile(t, f, "ep")
+
+	res, err := sidecarOrganizer(lib).OrganizeTorrentFile(f, "Some.Show.S02E04.1080p", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Moved) != 1 {
+		t.Fatalf("expected 1 moved, got %v", res.Moved)
+	}
+	want := filepath.Join(lib, "series", "Some Show", "Season 2", "Some.Show.S02E04.mkv")
+	if res.Moved[0] != want {
+		t.Errorf("got %q, want %q", res.Moved[0], want)
+	}
+}

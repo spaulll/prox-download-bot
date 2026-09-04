@@ -20,6 +20,9 @@ var (
 	seasonOnlyRe  = regexp.MustCompile(`(?i)\bs[0-9]{1,2}\b`)
 	xeCut         = regexp.MustCompile(`(?i)\b[0-9]{1,2}x[0-9]{1,3}\b.*`)
 	tagCut        = regexp.MustCompile(`(?i)\b(720p|1080p|2160p|480p|360p|4k|uhd|bluray|blu-ray|bdrip|bd|brrip|webrip|web-dl|webdl|web|hdtv|dvdrip|dvdscr|x264|x265|h\.?264|h\.?265|hevc|avc|aac|ac3|eac3|dts|dtshd|truehd|atmos|hdr|hdr10|dolby|vision|10bit|8bit|remux|extended|repack|proper|remastered|unrated|dual|audio|sub|subs|msubs|esubs|subbed|dubbed|hindi|korean|japanese|chinese|taiwanese|mandarin|english|RG|org|netflix|amzn|nf|dsnp|hulu|hmax|max|pc|rip)\b.*`)
+	bracketRe     = regexp.MustCompile(`\[[^\]]*\]`)
+	parenRe       = regexp.MustCompile(`\([^)]*\)`)
+	movieYearRe   = regexp.MustCompile(`\b((?:19|20)[0-9]{2})\b`)
 	spaceRe       = regexp.MustCompile(`\s+`)
 	episodeRe     = regexp.MustCompile(`(?i)\b(s[0-9]{1,2}[._ -]?e[0-9]{1,3}|[0-9]{1,2}x[0-9]{1,3}|e[0-9]{1,3}(?:\b|\.[a-z0-9]{2,4}$))`)
 	seRe          = regexp.MustCompile(`(?i)\bs([0-9]{1,2})[._ -]?e[0-9]{1,3}\b`)
@@ -181,6 +184,42 @@ func CleanEpisodeFileName(filename string) string {
 		return SanitizeFileName(title) + ext
 	}
 	return SanitizeFileName(title+"."+cleanMarker) + ext
+}
+
+// CleanMovieFolderName derives a "Title (Year)" folder name from a release
+// or torrent name, keeping the year (unlike CleanSeasonPackName):
+// "Example Movie (2024) [1080p] [WEBRip] [5.1] [DEMO]" and
+// "Example.Movie.2024.1080p.WEBRip.x264.mp4" both become "Example Movie (2024)".
+// Returns "" when no usable title remains.
+func CleanMovieFolderName(name string) string {
+	s := strings.TrimSpace(name)
+	// strip a real file extension only (tag brackets like "[GRP]" must
+	// not count as one)
+	if ext := filepath.Ext(s); ext != "" {
+		if ok, _ := regexp.MatchString(`(?i)^\.[a-z0-9]{2,4}$`, ext); ok {
+			s = strings.TrimSuffix(s, ext)
+		}
+	}
+	year := ""
+	if m := movieYearRe.FindStringSubmatch(s); m != nil {
+		year = m[1]
+	}
+	s = bracketRe.ReplaceAllString(s, " ")
+	s = parenRe.ReplaceAllString(s, " ")
+	s = strings.NewReplacer(".", " ", "_", " ").Replace(s)
+	s = tagCut.ReplaceAllString(s, "")
+	s = yearBareRe.ReplaceAllString(s, "")
+	s = spaceRe.ReplaceAllString(s, " ")
+	s = strings.TrimSpace(s)
+	s = strings.TrimRight(s, "-_~ ")
+	if s == "" {
+		return ""
+	}
+	title := TitleCase(strings.ToLower(s))
+	if year != "" {
+		return title + " (" + year + ")"
+	}
+	return title
 }
 
 // CleanSeasonPackName derives a clean series folder name from a season-pack

@@ -128,6 +128,19 @@ func (o *Organizer) OrganizeDirectory(dir string, report Reporter) (*Result, err
 		}
 	}
 
+	// no episodes: keep the whole release together in one folder inside
+	// its primary category (Movies/Film (Year)/...), like a movie torrent
+	hasEpisode := false
+	for _, v := range videos {
+		if IsEpisode(filepath.Base(v)) {
+			hasEpisode = true
+			break
+		}
+	}
+	if !hasEpisode {
+		return o.organizeReleaseGroup(dir, files, report)
+	}
+
 	total := len(files)
 	done := 0
 	// videoDest remembers where each video landed for sidecar matching
@@ -173,6 +186,106 @@ func startsOnBoundary(s, prefix string) bool {
 		}
 	}
 	return false
+}
+
+// organizeReleaseGroup keeps a non-episodic release (movie + subs/artwork,
+// music album, ...) together in one folder inside its primary category:
+// Movies/Example Movie (2024)/.... Falls back to per-file routing when the
+// folder cannot be determined.
+func (o *Organizer) organizeReleaseGroup(dir string, files []string, report Reporter) (*Result, error) {
+	start := time.Now()
+	res := &Result{Started: start}
+
+	routeEach := func() {
+		total := len(files)
+		for i, f := range files {
+			reportFn(report, Progress{Step: "moving", Detail: "Analyzing content", Done: i, Total: total})
+			o.routeFile(f, res)
+		}
+		if c := filepath.Clean(dir); c != "/" && c != "." && c != "" {
+			_ = os.RemoveAll(dir)
+		}
+		res.Duration = time.Since(start)
+	}
+
+	if len(files) == 0 {
+		routeEach()
+		return res, nil
+	}
+	primary := ""
+	for _, f := range files {
+		if IsVideo(filepath.Base(f)) {
+			primary = Categorize(filepath.Ext(f))
+			break
+		}
+	}
+	if primary == "" {
+		primary = Categorize(filepath.Ext(files[0]))
+	}
+	destRoot := o.Paths.dirFor(primary)
+	folder := CleanMovieFolderName(filepath.Base(dir))
+	if destRoot == "" || folder == "" {
+		routeEach()
+		return res, nil
+	}
+	destDir := filepath.Join(destRoot, SanitizeFolderName(folder))
+	if err := ensureDir(destDir); err != nil {
+		routeEach()
+		return res, nil
+	}
+	total := len(files)
+	for i, f := range files {
+		reportFn(report, Progress{Step: "moving", Detail: "Analyzing content", Done: i, Total: total})
+		o.moveFile(f, filepath.Join(destDir, filepath.Base(f)), res)
+	}
+	if c := filepath.Clean(dir); c != "/" && c != "." && c != "" {
+		_ = os.RemoveAll(dir)
+	}
+	res.Category = primary
+	res.Duration = time.Since(start)
+	return res, nil
+}
+
+// OrganizeTorrentFile routes a single-file torrent download into a dedicated
+// folder inside its category: Movies/Example Movie (2024)/file. Episodes keep
+// the series/show/season placement. report may be nil.
+func (o *Organizer) OrganizeTorrentFile(srcPath, torrentName string, report Reporter) (*Result, error) {
+	start := time.Now()
+	res := &Result{Started: start}
+
+	info, err := os.Stat(srcPath)
+	if err != nil {
+		return nil, err
+	}
+	if info.IsDir() {
+		return o.OrganizeDirectory(srcPath, report)
+	}
+	name := filepath.Base(srcPath)
+	if IsEpisode(name) {
+		o.routeEpisode(srcPath, res, report)
+		res.Duration = time.Since(start)
+		return res, nil
+	}
+	category := Categorize(filepath.Ext(srcPath))
+	destRoot := o.Paths.dirFor(category)
+	folder := CleanMovieFolderName(torrentName)
+	if folder == "" {
+		folder = CleanMovieFolderName(name)
+	}
+	if destRoot == "" || folder == "" {
+		r, err := o.OrganizeFile(srcPath, report)
+		return r, err
+	}
+	destDir := filepath.Join(destRoot, SanitizeFolderName(folder))
+	if err := ensureDir(destDir); err != nil {
+		r, err := o.OrganizeFile(srcPath, report)
+		return r, err
+	}
+	reportFn(report, Progress{Step: "moving", Detail: "Analyzing content", Done: 0, Total: 1})
+	o.moveFile(srcPath, filepath.Join(destDir, name), res)
+	res.Category = category
+	res.Duration = time.Since(start)
+	return res, nil
 }
 
 // matchSidecarDir finds the destination directory of the video a sidecar

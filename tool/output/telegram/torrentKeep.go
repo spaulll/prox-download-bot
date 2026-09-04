@@ -2,16 +2,20 @@ package telegram
 
 import (
 	"DownloadBot/internal/config"
+	"DownloadBot/internal/users"
 	"DownloadBot/tool/input"
 	logger "DownloadBot/tool/zap"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 )
+
+var magnetHashRe = regexp.MustCompile(`(?i)magnet:\?.*?xt=urn:btih:([a-z0-9]{32,40})`)
 
 // Torrent-file handling: every .torrent sent to the bot is stored in the
 // torrents folder, then its content is downloaded. keepTorrent controls
@@ -129,6 +133,106 @@ func rememberUploadedTorrent(gid string) {
 	out.Close()
 	logger.Info("Stored uploaded torrent %s", dest)
 	rememberTorrentFile(gid, dest)
+}
+
+// relinkFollowedTasks copies the task entry of gid to its follow-torrent
+// children (magnets/.torrent URLs spawn a new GID) so ownership,
+// notifications and magnet-link lookups keep working for the real download.
+func relinkFollowedTasks(gid string, children []string) {
+	task, ok := taskStore.Get(gid)
+	if !ok {
+		return
+	}
+	for _, child := range children {
+		if _, exists := taskStore.Get(child); !exists {
+			taskStore.Add(users.Task{
+				GID:    child,
+				UserID: task.UserID,
+				Link:   task.Link,
+				Name:   task.Name,
+				Engine: task.Engine,
+				Status: task.Status,
+			})
+		}
+	}
+}
+
+// magnetHash extracts the btih info hash from a magnet link ("" if none).
+func magnetHash(link string) string {
+	m := magnetHashRe.FindStringSubmatch(link)
+	if m == nil {
+		return ""
+	}
+	return m[1]
+}
+
+// maybeHandleMagnetFile moves the aria2-generated <infohash>.torrent of a
+// magnet download into the torrents folder (or deletes it when the keep
+// toggle is off). No-op for non-magnet tasks.
+func maybeHandleMagnetFile(gid, displayName string) {
+	task, ok := taskStore.Get(gid)
+	if !ok || !strings.HasPrefix(strings.ToLower(task.Link), "magnet:?") {
+		return
+	}
+	hash := magnetHash(task.Link)
+	if hash == "" {
+		return
+	}
+	dl := config.GetDownloadFolder()
+	var src string
+	for _, cand := range []string{
+		filepath.Join(dl, strings.ToLower(hash)+".torrent"),
+		filepath.Join(dl, strings.ToUpper(hash)+".torrent"),
+	} {
+		if _, err := os.Stat(cand); err == nil {
+			src = cand
+			break
+		}
+	}
+	if src == "" {
+		return
+	}
+	if !keepTorrentFile() {
+		if err := os.Remove(src); err != nil && !os.IsNotExist(err) {
+			logger.Error("failed to remove magnet torrent file %s: %v", src, err)
+			return
+		}
+		logger.Info("Removed magnet torrent file %s (keepTorrent off)", src)
+		return
+	}
+	name := displayName
+	if !strings.HasSuffix(strings.ToLower(name), ".torrent") {
+		name += ".torrent"
+	}
+	dir := torrentsDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		logger.Error("failed to prepare torrents dir %s: %v", dir, err)
+		return
+	}
+	dest := uniqueFilePath(filepath.Join(dir, name))
+	if err := os.Rename(src, dest); err != nil {
+		if err := copyTorrentFile(src, dest); err != nil {
+			logger.Error("failed to store magnet torrent file %s: %v", dest, err)
+			return
+		}
+		_ = os.Remove(src)
+	}
+	logger.Info("Stored magnet torrent file %s", dest)
+}
+
+func copyTorrentFile(src, dest string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dest)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	_, err = io.Copy(out, in)
+	return err
 }
 
 // uniqueFilePath appends " (1)", " (2)", ... before the extension when dst

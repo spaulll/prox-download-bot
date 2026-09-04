@@ -171,6 +171,7 @@ func runArchivePipeline(bot *tgBotApi.BotAPI, chatID int64, gid string, org *org
 	res.Duration = time.Since(start)
 	sendArchiveSummary(bot, chatID, displayName, res)
 	maybeDropTorrentFile(gid)
+	maybeHandleMagnetFile(gid, displayName)
 	// success: wipe intermediates, keep only the final summary
 	live.Delete()
 	deleteMessages(bot, chatID, append(preMsgIDs, popRecoveryNotice())...)

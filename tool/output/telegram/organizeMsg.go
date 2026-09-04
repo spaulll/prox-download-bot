@@ -189,7 +189,9 @@ func organizeChatID() int64 {
 
 // runOrganize executes the organize pipeline for a completed download and
 // drives the live Telegram progress messages. Runs asynchronously.
-func runOrganize(bot *tgBotApi.BotAPI, chatID int64, gid, srcPath, displayName string) {
+// isTorrent marks content that arrived via BitTorrent: single files go into
+// a dedicated folder instead of the category root.
+func runOrganize(bot *tgBotApi.BotAPI, chatID int64, gid, srcPath, displayName string, isTorrent bool) {
 	// plan-style "Download completed" message (deleted once organizing ends)
 	completedMsg := sendPlain(bot, chatID, fmt.Sprintf("✅ Download completed\n\n%s", displayName))
 	inflightAdd(chatID, completedMsg)
@@ -224,6 +226,10 @@ func runOrganize(bot *tgBotApi.BotAPI, chatID int64, gid, srcPath, displayName s
 	info, statErr := os.Stat(srcPath)
 	if statErr == nil && info.IsDir() {
 		res, err = org.OrganizeDirectory(srcPath, report)
+	} else if isTorrent && !organize.IsTorrent(srcPath) {
+		// single-file torrent content (not the .torrent file itself):
+		// dedicated folder instead of the bare category root
+		res, err = org.OrganizeTorrentFile(srcPath, displayName, report)
 	} else {
 		res, err = org.OrganizeFile(srcPath, report)
 	}
@@ -236,11 +242,14 @@ func runOrganize(bot *tgBotApi.BotAPI, chatID int64, gid, srcPath, displayName s
 	// stored path so the keep toggle can drop it after the content lands
 	if organize.IsTorrent(srcPath) && len(res.Moved) > 0 {
 		stored := res.Moved[len(res.Moved)-1]
-		for _, child := range followedChildren(gid) {
+		children := followedChildren(gid)
+		for _, child := range children {
 			rememberTorrentFile(child, stored)
 		}
+		relinkFollowedTasks(gid, children)
 	}
 	maybeDropTorrentFile(gid)
+	maybeHandleMagnetFile(gid, displayName)
 	// success: wipe intermediates, keep only the final summary
 	cleanup()
 	deleteMessages(bot, chatID, completedMsg)
@@ -359,8 +368,9 @@ func handleDownloadComplete(events []rpc.Event) {
 		// resolve path with retries: the RPC connection may be busy right
 		// after the completion notification
 		var srcPath, name string
+		var isTorrent bool
 		for attempt := 0; attempt < 5; attempt++ {
-			srcPath, name = input.ToolApp.Aria2.DownloadedPath(gid)
+			srcPath, name, isTorrent = input.ToolApp.Aria2.DownloadedPath(gid)
 			if srcPath != "" {
 				break
 			}
@@ -377,12 +387,13 @@ func handleDownloadComplete(events []rpc.Event) {
 			// a "Download completed" + "Organize failed" pair.
 			if st, serr := input.ToolApp.Aria2.TellStatusFull(gid); serr == nil {
 				if len(st.FollowedBy) > 0 || strings.HasPrefix(st.BitTorrent.Info.Name, "[METADATA]") {
+					relinkFollowedTasks(gid, st.FollowedBy)
 					dropStartedNotice(gid)
 					logger.Info("skipping metadata pseudo-download %s", gid)
 					return
 				}
 			}
 		}
-		runOrganize(activeBot, organizeChatID(), gid, srcPath, name)
+		runOrganize(activeBot, organizeChatID(), gid, srcPath, name, isTorrent)
 	}()
 }
