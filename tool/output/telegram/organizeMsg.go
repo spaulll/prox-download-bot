@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -194,6 +195,13 @@ func runOrganize(bot *tgBotApi.BotAPI, chatID int64, gid, srcPath, displayName s
 		return
 	}
 
+	// safety: never organize the download root itself (a mis-resolved
+	// torrent path here would walk the entire library staging area)
+	if samePath(srcPath, config.GetDownloadFolder()) {
+		logger.Error("refusing to organize download root for gid %s", gid)
+		return
+	}
+
 	org := buildOrganizer()
 
 	// archive -> extraction pipeline (extract, then re-run organize)
@@ -223,6 +231,16 @@ func runOrganize(bot *tgBotApi.BotAPI, chatID int64, gid, srcPath, displayName s
 	cleanup()
 	deleteMessages(bot, chatID, completedMsg)
 	sendOrganizeSummary(bot, chatID, displayName, res)
+}
+
+// samePath reports whether two paths resolve to the same directory.
+func samePath(a, b string) bool {
+	ca, errA := filepath.Abs(filepath.Clean(a))
+	cb, errB := filepath.Abs(filepath.Clean(b))
+	if errA != nil || errB != nil {
+		return filepath.Clean(a) == filepath.Clean(b)
+	}
+	return ca == cb
 }
 
 // sendPlain sends a simple message, returning its message ID (0 on failure).

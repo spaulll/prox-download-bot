@@ -44,7 +44,12 @@ func testTMStop(TMStop func(gid string)) {
 		//log.Println(a)
 		if _, have := TMAllowDownloads[gid]; !have {
 			dlInfo, err := aria2Rpc.TellStatus(gid)
-			dropErr(err)
+			if err != nil {
+				// transient RPC failure (e.g. aria2 restarting) must not
+				// take the bot down - skip this event
+				logger.Error("testTMStop tellStatus failed for %s: %v", gid, err)
+				continue
+			}
 			//log.Printf("%+v\n", dlInfo)
 			if dlInfo.BitTorrent.Info.Name != "" {
 				aria2Rpc.Pause(gid)
@@ -404,7 +409,10 @@ func (a Aria2) FormatGidAndNameFiltered(method int, allow map[string]bool) []map
 
 func (a Aria2) TellName(gid string) string {
 	info, err := aria2Rpc.TellStatus(gid)
-	dropErr(err)
+	if err != nil {
+		logger.Error("TellName failed for %s: %v", gid, err)
+		return gid
+	}
 	logger.Debug("GID info:%v", info)
 	Name := ""
 	if info.BitTorrent.Info.Name != "" {
@@ -425,7 +433,10 @@ func (a Aria2) TellName(gid string) string {
 func tellName(gid string) string {
 
 	info, err := aria2Rpc.TellStatus(gid)
-	dropErr(err)
+	if err != nil {
+		logger.Error("tellName failed for %s: %v", gid, err)
+		return gid
+	}
 	logger.Debug("GID info:%v", info)
 	Name := ""
 	if info.BitTorrent.Info.Name != "" {
@@ -451,16 +462,20 @@ func (a Aria2) Download(uri string) (string, bool) {
 	}
 	uriData := make([]string, 0)
 	uriData = append(uriData, uri)
+	// torrents often ship stale webseeds (HTTP 404s) while DHT/trackers
+	// still work - tolerate many file-not-found hits so a few dead
+	// webseeds don't abort the torrent before peers connect
+	torrentOpt := rpc2.Option{"max-file-not-found": "100"}
 	switch uriType {
 	case 1, 2:
-		gid, err := aria2Rpc.AddURI(uriData)
+		gid, err := aria2Rpc.AddURI(uriData, torrentOpt)
 		if err != nil || gid == "" {
 			logger.Error("addUri failed: %v", err)
 			return "", false
 		}
 		return gid, true
 	case 3:
-		gid, err := aria2Rpc.AddTorrent(uri)
+		gid, err := aria2Rpc.AddTorrent(uri, torrentOpt)
 		if err != nil || gid == "" {
 			logger.Error("addTorrent failed: %v", err)
 			return "", false
@@ -474,14 +489,21 @@ func (a Aria2) Download(uri string) (string, bool) {
 func (a Aria2) FormatTMFiles(gid string) [][]string {
 	var fileList [][]string
 	rawList, err := aria2Rpc.GetFiles(gid)
-
-	dropErr(err)
+	if err != nil {
+		// magnet metadata may not be ready yet, or the task was removed -
+		// report empty and let the caller retry instead of crashing
+		logger.Error("FormatTMFiles getFiles failed for %s: %v", gid, err)
+		return fileList
+	}
 	// log.Printf("%+v", rawList)
 	for _, file := range rawList {
 		fileInfo := make([]string, 0)
 		fileInfo = append(fileInfo, file.Path)
 		bytes, err := strconv.ParseFloat(file.Length, 64)
-		dropErr(err)
+		if err != nil {
+			logger.Error("FormatTMFiles bad length for %s: %v", gid, err)
+			continue
+		}
 		fileInfo = append(fileInfo, typeTrans.Byte2Readable(bytes))
 		fileInfo = append(fileInfo, file.Selected)
 		fileList = append(fileList, fileInfo)
@@ -496,17 +518,53 @@ func (a Aria2) SetTMDownloadFilesAndStart(gid string, FilesList [][2]int) {
 			selectFile += fmt.Sprint(file[1]) + ","
 		}
 	}
-	aria2Rpc.ChangeOption(gid, rpc2.Option{
-		"select-file": selectFile[:len(selectFile)-1], // remove the last comma
-	})
+	// the testTMStop pause is async - an immediate unpause can be dropped
+	// by aria2, leaving the torrent paused forever. Wait for it to settle.
+	for i := 0; i < 10; i++ {
+		st, err := aria2Rpc.TellStatus(gid)
+		if err != nil {
+			logger.Error("SetTMDownloadFilesAndStart tellStatus failed for %s: %v", gid, err)
+			return
+		}
+		if st.Status == "paused" {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if selectFile != "" {
+		if _, err := aria2Rpc.ChangeOption(gid, rpc2.Option{
+			"select-file": selectFile[:len(selectFile)-1], // remove the last comma
+		}); err != nil {
+			logger.Error("SetTMDownloadFilesAndStart changeOption failed for %s: %v", gid, err)
+		}
+	}
+	// empty selection: allow the download as-is instead of slicing an
+	// empty string (panic)
 	TMAllowDownloads[gid] = 0
-	aria2Rpc.Unpause(gid)
+	// unpause with verification - fire-and-forget unpause can be lost
+	for i := 0; i < 5; i++ {
+		if _, err := aria2Rpc.Unpause(gid); err != nil {
+			logger.Error("SetTMDownloadFilesAndStart unpause failed for %s: %v", gid, err)
+		}
+		time.Sleep(500 * time.Millisecond)
+		st, err := aria2Rpc.TellStatus(gid)
+		if err != nil {
+			logger.Error("SetTMDownloadFilesAndStart tellStatus failed for %s: %v", gid, err)
+			return
+		}
+		if st.Status == "active" || st.Status == "waiting" {
+			return
+		}
+	}
+	logger.Error("SetTMDownloadFilesAndStart: %s did not resume", gid)
 
 }
 func (a Aria2) SelectBiggestFile(gid string) int {
 	index := 0
 	rawList, err := aria2Rpc.GetFiles(gid)
-	dropErr(err)
+	if err != nil || len(rawList) == 0 {
+		return 1
+	}
 	for i := 0; i < len(rawList); i++ {
 		if typeTrans.Str2Int(rawList[i].Length) > typeTrans.Str2Int(rawList[index].Length) {
 			index = i
@@ -517,7 +575,9 @@ func (a Aria2) SelectBiggestFile(gid string) int {
 func (a Aria2) SelectBigFiles(gid string) []int {
 	index := make([]int, 0)
 	rawList, err := aria2Rpc.GetFiles(gid)
-	dropErr(err)
+	if err != nil || len(rawList) == 0 {
+		return index
+	}
 	totalSize, avgSize := 0, 0.0
 	for _, file := range rawList {
 		totalSize += typeTrans.Str2Int(file.Length)
@@ -527,7 +587,9 @@ func (a Aria2) SelectBigFiles(gid string) []int {
 
 	for i := 0; i < len(rawList); i++ {
 		dist, err := strconv.ParseFloat(rawList[i].Length, 64)
-		dropErr(err)
+		if err != nil {
+			continue
+		}
 		if dist > avgSize {
 			index = append(index, i+1)
 		}
@@ -640,6 +702,15 @@ func (a Aria2) DownloadedPath(gid string) (path string, name string) {
 		return "", ""
 	}
 	if info.BitTorrent.Info.Name != "" {
+		// single-file torrent: Files[0].Path is the file itself - return it
+		// directly. Returning the download folder here would make the
+		// organizer walk the entire download root (data loss risk).
+		if len(info.Files) == 1 {
+			if info.Files[0].Path != "" {
+				return filepath.Clean(info.Files[0].Path), info.BitTorrent.Info.Name
+			}
+			return config.GetDownloadFolder(), info.BitTorrent.Info.Name
+		}
 		for _, f := range info.Files {
 			if f.Path != "" {
 				p := filepath.Clean(f.Path)

@@ -118,8 +118,10 @@ func (o *Organizer) OrganizeDirectory(dir string, report Reporter) (*Result, err
 		reportFn(report, Progress{Step: "moving", Detail: "Analyzing content", Done: i, Total: total})
 		o.routeFile(f, res)
 	}
-	// remove now-empty source dir
-	_ = os.RemoveAll(dir)
+	// remove now-empty source dir (never the filesystem root)
+	if c := filepath.Clean(dir); c != "/" && c != "." && c != "" {
+		_ = os.RemoveAll(dir)
+	}
 
 	res.Duration = time.Since(start)
 	return res, nil

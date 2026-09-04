@@ -10,9 +10,9 @@ import (
 	"DownloadBot/tool/typeTrans"
 	logger "DownloadBot/tool/zap"
 	"fmt"
-	"math/rand"
 	tgBotApi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"log"
+	"math/rand"
 	"regexp"
 	"sort"
 	"strings"
@@ -115,11 +115,17 @@ func Aria2TMSelectMsg(bot *tgBotApi.BotAPI) {
 					}
 				}
 				for _, i := range bigFilesIndex {
-					selectFileList[index2Original[i]][0] = 1
+					if idx, ok := index2Original[i]; ok && idx >= 0 && idx < len(selectFileList) {
+						selectFileList[idx][0] = 1
+					}
 				}
 			default:
 				i := typeTrans.Str2Int(b[1]) - 1 // sequence num displayed is more than the subscript,so reduce it
-				if downloadFilesCount > 1 {      // make sure that at least one file will be downloaded
+				if i < 0 || i >= len(selectFileList) {
+					// stale button from a previous picker - ignore
+					break
+				}
+				if downloadFilesCount > 1 { // make sure that at least one file will be downloaded
 					if selectFileList[i][1] >= 0 {
 						if selectFileList[i][0] == 1 {
 							selectFileList[i][0] = 0
@@ -129,20 +135,20 @@ func Aria2TMSelectMsg(bot *tgBotApi.BotAPI) {
 					} else { //if select node
 						if selectFileList[i][0] == 1 {
 							selectFileList[i][0] = 0
-							for s := 1; s < selectFileList[i][1]*-1; s++ {
+							for s := 1; s < selectFileList[i][1]*-1 && i+s < len(selectFileList); s++ {
 								selectFileList[i+s][0] = 0
 								downloadFilesCount--
 							}
 							if downloadFilesCount < 1 {
 								selectFileList[i][0] = 1
-								for s := 1; s < selectFileList[i][1]*-1; s++ {
+								for s := 1; s < selectFileList[i][1]*-1 && i+s < len(selectFileList); s++ {
 									selectFileList[i+s][0] = 1
 									downloadFilesCount++
 								}
 							}
 						} else {
 							selectFileList[i][0] = 1
-							for s := 1; s < selectFileList[i][1]*-1; s++ {
+							for s := 1; s < selectFileList[i][1]*-1 && i+s < len(selectFileList); s++ {
 								selectFileList[i+s][0] = 1
 							}
 						}
@@ -155,7 +161,14 @@ func Aria2TMSelectMsg(bot *tgBotApi.BotAPI) {
 					allSelected := true
 					allNotSelected := true
 					// log.Println(i+1,i+1+val[1]*-1-1,val[1],)
-					for _, val1 := range selectFileList[i+1 : i+1+val[1]*-1-1] {
+					end := i + 1 + val[1]*-1 - 1
+					if end > len(selectFileList) {
+						end = len(selectFileList)
+					}
+					if i+1 > end {
+						continue
+					}
+					for _, val1 := range selectFileList[i+1 : end] {
 						if val1[0] == 0 {
 							allSelected = false
 						} else if val1[0] == 1 {
@@ -176,7 +189,29 @@ func Aria2TMSelectMsg(bot *tgBotApi.BotAPI) {
 				}
 			}
 		} else {
+			// new torrent/magnet: fresh picker state (single picker at a time;
+			// stale entries from a previous torrent misalign indexes and panic)
+			directoryTree = make(map[string]interface{}, 0)
+			selectFileList = make([][2]int, 0)
 			fileList := input.ToolApp.Aria2.FormatTMFiles(gid)
+			// magnet metadata arrives asynchronously - poll briefly instead
+			// of building a picker from an empty file list (panic)
+			for i := 0; i < 15 && len(fileList) == 0; i++ {
+				time.Sleep(time.Second)
+				fileList = input.ToolApp.Aria2.FormatTMFiles(gid)
+			}
+			if len(fileList) == 0 {
+				// metadata never arrived (dead magnet / removed task) -
+				// release the pause so nothing sticks, skip the picker
+				logger.Error("torrent file list empty for %s, starting as-is", gid)
+				input.ToolApp.Aria2.SetTMDownloadFilesAndStart(gid, nil)
+				continue
+			}
+			if len(fileList) == 1 {
+				// single-file torrent: no selection needed, start directly
+				input.ToolApp.Aria2.SetTMDownloadFilesAndStart(gid, [][2]int{{1, 1}})
+				continue
+			}
 			index := 1
 			for i, file := range fileList {
 				pathClass(fmt.Sprintf("%s|%s|%d", file[0], file[1], i+1), &directoryTree)
@@ -190,6 +225,13 @@ func Aria2TMSelectMsg(bot *tgBotApi.BotAPI) {
 		inlineKeyBoardRow := make([]tgBotApi.InlineKeyboardButton, 0)
 
 		fileListGoTree, _, _ := generateGoTree(directoryTree, 0, &selectFileList)
+		if len(fileListGoTree) == 0 {
+			// tree build produced nothing (unexpected shape) - start the
+			// download as-is instead of indexing an empty slice (panic)
+			logger.Error("torrent tree empty for %s, starting as-is", gid)
+			input.ToolApp.Aria2.SetTMDownloadFilesAndStart(gid, nil)
+			continue
+		}
 		fileListTreeLine := strings.Split(fileListGoTree[0].Print(), "\n")
 		fileListTreeLineCount := len(fileListTreeLine)
 		characterCount := len(text)
@@ -404,7 +446,38 @@ func generateGoTree(m map[string]interface{}, index int, selectFileList *[][2]in
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
+	// grow is a bounds-safe accessor for selectFileList entries
+	grow := func(idx int) {
+		for len(*selectFileList) <= idx {
+			*selectFileList = append(*selectFileList, [2]int{1, 0})
+		}
+	}
 	for _, k := range keys {
+		// top-level files without a directory (e.g. single file whose path
+		// had no "/"): pathClass stores them under FileMarker directly
+		if k == FileMarker {
+			ls, ok := m[k].([]string)
+			if !ok {
+				continue
+			}
+			for _, u := range ls {
+				_fileInfo := strings.Split(u, "|")
+				if len(_fileInfo) < 3 {
+					continue
+				}
+				grow(index)
+				_selectAndOriginalNum := [2]int{1, typeTrans.Str2Int(_fileInfo[2])}
+				*selectFileList = append(*selectFileList, _selectAndOriginalNum)
+				if (*selectFileList)[index][0] == 1 {
+					artist = append(artist, goTree.New(fmt.Sprintf("✅%d: %s|%s", index+1, _fileInfo[0], _fileInfo[1])))
+				} else {
+					artist = append(artist, goTree.New(fmt.Sprintf("⬜%d: %s|%s", index+1, _fileInfo[0], _fileInfo[1])))
+				}
+				index++
+				allFilesOwnedByNodeCount++
+			}
+			continue
+		}
 		var _artist goTree.Tree
 		filesOwnedByNodeCount := 0
 		switch vv := m[k].(type) {
@@ -418,6 +491,7 @@ func generateGoTree(m map[string]interface{}, index int, selectFileList *[][2]in
 				*selectFileList = append(*selectFileList, _selectAndOriginalNum)
 				isEmpty = true
 			}
+			grow(index - 1)
 			if (*selectFileList)[index-1][0] == 1 {
 				_artist = goTree.New(fmt.Sprintf("✅%d: %s", index, k))
 			} else if (*selectFileList)[index-1][0] == 0 {
@@ -434,12 +508,18 @@ func generateGoTree(m map[string]interface{}, index int, selectFileList *[][2]in
 					filesOwnedByNodeCount++
 					_fileInfo := strings.Split(u, "|")
 					//0 is file name,1 is file size, 2 is original num
+					if len(_fileInfo) < 3 {
+						filesOwnedByNodeCount--
+						index--
+						continue
+					}
 
 					if isEmpty {
 						_selectAndOriginalNum := [2]int{1, typeTrans.Str2Int(_fileInfo[2])}
 						*selectFileList = append(*selectFileList, _selectAndOriginalNum)
 					}
 
+					grow(index - 1)
 					if (*selectFileList)[index-1][0] == 1 {
 						_artist.Add(fmt.Sprintf("✅%d: %s|%s", index, _fileInfo[0], _fileInfo[1]))
 					} else {
@@ -456,6 +536,7 @@ func generateGoTree(m map[string]interface{}, index int, selectFileList *[][2]in
 				}
 			}
 			artist = append(artist, _artist)
+			grow(nodeIndex)
 			(*selectFileList)[nodeIndex][1] = filesOwnedByNodeCount * -1 // node has no original num, so we can set the second to the number of file subordinate to this node,but to prevent confusion with original num, we will take a negative
 		}
 		allFilesOwnedByNodeCount += filesOwnedByNodeCount
