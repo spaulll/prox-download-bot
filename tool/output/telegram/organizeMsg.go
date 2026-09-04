@@ -151,6 +151,9 @@ func libraryRoots() map[string]string {
 
 // formatDuration renders "1m 42s" style durations.
 func formatDuration(d time.Duration) string {
+	if d < time.Second {
+		return "<1s"
+	}
 	if d < time.Minute {
 		return fmt.Sprintf("%ds", int(d.Seconds()))
 	}
@@ -366,6 +369,19 @@ func handleDownloadComplete(events []rpc.Event) {
 		if srcPath == "" {
 			logger.Error("could not resolve download path for gid %s", gid)
 			return
+		}
+		if _, err := os.Stat(srcPath); err != nil {
+			// magnet metadata pseudo-downloads complete without any
+			// on-disk files (aria2 names them "[METADATA]..."); the real
+			// torrent follows separately. Skip quietly instead of posting
+			// a "Download completed" + "Organize failed" pair.
+			if st, serr := input.ToolApp.Aria2.TellStatusFull(gid); serr == nil {
+				if len(st.FollowedBy) > 0 || strings.HasPrefix(st.BitTorrent.Info.Name, "[METADATA]") {
+					dropStartedNotice(gid)
+					logger.Info("skipping metadata pseudo-download %s", gid)
+					return
+				}
+			}
 		}
 		runOrganize(activeBot, organizeChatID(), gid, srcPath, name)
 	}()

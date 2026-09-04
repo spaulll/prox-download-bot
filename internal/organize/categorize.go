@@ -40,6 +40,15 @@ var torrentExts = map[string]bool{
 	".torrent": true,
 }
 
+// sidecarExts are files that belong next to their video (subtitles,
+// metadata, artwork, release notes) instead of being sorted by type.
+var sidecarExts = map[string]bool{
+	".srt": true, ".sub": true, ".idx": true, ".ssa": true, ".ass": true,
+	".smi": true, ".vtt": true, ".sup": true,
+	".nfo": true, ".txt": true,
+	".jpg": true, ".jpeg": true, ".png": true, ".tbn": true, ".webp": true,
+}
+
 // Categorize maps a file extension to a category label.
 func Categorize(ext string) string {
 	switch {
@@ -64,6 +73,10 @@ func IsAudio(name string) bool   { return audioExts[strings.ToLower(filepath.Ext
 func IsDoc(name string) bool     { return docExts[strings.ToLower(filepath.Ext(name))] }
 func IsArchive(name string) bool { return archiveExts[strings.ToLower(filepath.Ext(name))] }
 func IsTorrent(name string) bool { return torrentExts[strings.ToLower(filepath.Ext(name))] }
+
+// IsSidecar reports whether name is a video sidecar file (subtitles,
+// metadata, artwork, release notes) that should stay next to its video.
+func IsSidecar(name string) bool { return sidecarExts[strings.ToLower(filepath.Ext(name))] }
 
 // Paths holds the resolved library directory layout.
 type Paths struct {

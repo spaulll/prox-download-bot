@@ -96,7 +96,10 @@ func (o *Organizer) OrganizeFile(srcPath string, report Reporter) (*Result, erro
 	return res, nil
 }
 
-// OrganizeDirectory organizes every file inside a downloaded directory.
+// OrganizeDirectory organizes every file inside a downloaded directory
+// (e.g. a torrent root). Videos and regular files are routed by type;
+// sidecar files (subtitles, artwork, nfo, release notes) are kept next to
+// the video they belong to so players like Jellyfin/Plex pick them up.
 func (o *Organizer) OrganizeDirectory(dir string, report Reporter) (*Result, error) {
 	start := time.Now()
 	res := &Result{Started: start}
@@ -113,10 +116,44 @@ func (o *Organizer) OrganizeDirectory(dir string, report Reporter) (*Result, err
 		return nil, err
 	}
 
+	var videos, sidecars, regular []string
+	for _, f := range files {
+		switch {
+		case IsVideo(filepath.Base(f)):
+			videos = append(videos, f)
+		case IsSidecar(filepath.Base(f)):
+			sidecars = append(sidecars, f)
+		default:
+			regular = append(regular, f)
+		}
+	}
+
 	total := len(files)
-	for i, f := range files {
-		reportFn(report, Progress{Step: "moving", Detail: "Analyzing content", Done: i, Total: total})
+	done := 0
+	// videoDest remembers where each video landed for sidecar matching
+	videoDest := map[string]string{}
+	for _, v := range videos {
+		reportFn(report, Progress{Step: "moving", Detail: "Analyzing content", Done: done, Total: total})
+		done++
+		before := len(res.Moved)
+		o.routeFile(v, res)
+		if len(res.Moved) > before {
+			videoDest[v] = filepath.Dir(res.Moved[len(res.Moved)-1])
+		}
+	}
+	for _, f := range regular {
+		reportFn(report, Progress{Step: "moving", Detail: "Analyzing content", Done: done, Total: total})
+		done++
 		o.routeFile(f, res)
+	}
+	for _, s := range sidecars {
+		reportFn(report, Progress{Step: "moving", Detail: "Analyzing content", Done: done, Total: total})
+		done++
+		if destDir := matchSidecarDir(s, videos, videoDest); destDir != "" {
+			o.moveToDir(s, destDir, res)
+		} else {
+			o.routeFile(s, res)
+		}
 	}
 	// remove now-empty source dir (never the filesystem root)
 	if c := filepath.Clean(dir); c != "/" && c != "." && c != "" {
@@ -125,6 +162,52 @@ func (o *Organizer) OrganizeDirectory(dir string, report Reporter) (*Result, err
 
 	res.Duration = time.Since(start)
 	return res, nil
+}
+
+// startsOnBoundary reports whether s starts with prefix followed by a
+// separator (., -, _), so "show.s01e01" never matches "show.s01e011".
+func startsOnBoundary(s, prefix string) bool {
+	for _, sep := range []string{".", "-", "_"} {
+		if strings.HasPrefix(s, prefix+sep) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchSidecarDir finds the destination directory of the video a sidecar
+// file belongs to: same basename (movie.srt -> movie.mp4, including tagged
+// variants like movie.SDH.eng.srt), or the only routed video as fallback.
+// Returns "" when no video matches (caller routes the file by type).
+func matchSidecarDir(sidecar string, videos []string, videoDest map[string]string) string {
+	candidates := make([]string, 0, len(videos))
+	for _, v := range videos {
+		if d, ok := videoDest[v]; ok && d != "" {
+			candidates = append(candidates, v)
+		}
+	}
+	if len(candidates) == 0 {
+		return ""
+	}
+	sb := strings.ToLower(strings.TrimSuffix(filepath.Base(sidecar), filepath.Ext(sidecar)))
+	best, bestLen := "", -1
+	for _, v := range candidates {
+		vb := strings.ToLower(strings.TrimSuffix(filepath.Base(v), filepath.Ext(filepath.Base(v))))
+		// match either direction on a separator boundary: the sub often
+		// drops quality tags present in the video name and vice versa
+		if sb == vb || startsOnBoundary(sb, vb) || startsOnBoundary(vb, sb) {
+			if len(vb) > bestLen {
+				best, bestLen = v, len(vb)
+			}
+		}
+	}
+	if best != "" {
+		return videoDest[best]
+	}
+	if len(candidates) == 1 {
+		return videoDest[candidates[0]]
+	}
+	return ""
 }
 
 // routeFile dispatches one file by extension.
@@ -233,6 +316,20 @@ func (o *Organizer) placeAnimeIn(srcPath, animeRoot string, res *Result) {
 		}
 	}
 	o.moveFile(srcPath, filepath.Join(animeRoot, SanitizeFileName(CleanEpisodeFileName(name))), res)
+}
+
+// moveToDir moves a file into an already-decided destination directory,
+// keeping its original file name (used for sidecars following their video).
+func (o *Organizer) moveToDir(srcPath, destDir string, res *Result) {
+	if destDir == "" {
+		o.moveTo(srcPath, o.Paths.Others, res)
+		return
+	}
+	if err := ensureDir(destDir); err != nil {
+		res.Failed = append(res.Failed, srcPath)
+		return
+	}
+	o.moveFile(srcPath, filepath.Join(destDir, filepath.Base(srcPath)), res)
 }
 
 // moveTo moves a file into a category root.
