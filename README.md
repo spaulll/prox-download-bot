@@ -126,6 +126,76 @@ chmod +x DownloadBot-linux-amd64
 On Windows, run `DownloadBot-windows-amd64.exe -c .\config.json` in
 PowerShell/CMD. The binary is fully static — no installation required.
 
+## Runtime dependencies
+
+The bot binary is static, but it shells out to external tools. Install what
+matches the features you use:
+
+| Tool | Needed for | If missing |
+|------|------------|------------|
+| `aria2` | everything (core downloader, over RPC) | **required** — bot can't download |
+| `yt-dlp` | video-page URLs (YouTube, etc.) | those fail with `yt-dlp binary not found`, rest works |
+| `ffmpeg` | merging 1080p video + best audio, metadata/thumbnail embedding | yt-dlp merges/embeds fail |
+| `7z` | `.7z` / `.rar` extraction (plus fallback) | those archives fail with `no extraction backend available` |
+| `unrar` | `.rar` extraction fallback | rar fails unless `7z` handles it |
+| `unzip` | nothing in practice | `.zip`/`.tar.*` are handled natively in Go |
+
+### Linux (`amd64`, `arm64`, `armv7`, `386`) — Debian / Ubuntu / Raspberry Pi OS
+
+```bash
+sudo apt update
+sudo apt install aria2 ffmpeg unzip p7zip-full unrar
+```
+
+- `unrar` lives in Debian `non-free` / Ubuntu `multiverse` — enable that repo
+  if apt can't find it. Without it, most rar files still extract via `7z`.
+- Do **not** install `yt-dlp` from apt (hopelessly outdated). Use the
+  standalone build matching your arch from
+  [yt-dlp releases](https://github.com/yt-dlp/yt-dlp/releases):
+
+  | Your binary | yt-dlp asset |
+  |-------------|--------------|
+  | `DownloadBot-linux-amd64` | `yt-dlp_linux` |
+  | `DownloadBot-linux-arm64` | `yt-dlp_linux_aarch64` |
+  | `DownloadBot-linux-armv7` | `yt-dlp_linux_armv7l` |
+  | `DownloadBot-linux-386` | none published — use `pip install yt-dlp` |
+
+  ```bash
+  # example: 64-bit Raspberry Pi / ARM server
+  sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux_aarch64 \
+    -o /usr/local/bin/yt-dlp
+  sudo chmod +x /usr/local/bin/yt-dlp
+  ```
+
+  Point `ytdlpPath` in `config.json` at it if it's not on `PATH`.
+
+### Windows (`amd64`) — winget
+
+```powershell
+winget install -e --id aria2.aria2
+winget install -e --id yt-dlp.yt-dlp
+winget install -e --id Gyan.FFmpeg
+winget install -e --id 7zip.7zip
+```
+
+- `unzip`/`unrar` CLIs are not needed: zip is handled natively in Go and
+  7-Zip covers rar extraction (grab the official `unrar` CLI from
+  [rarlab.com](https://www.rarlab.com/) only for stubborn archives).
+- Open a fresh shell afterwards so `PATH` picks up the new tools.
+
+### macOS (`amd64` Intel, `arm64` Apple Silicon) — Homebrew
+
+```bash
+brew install aria2 yt-dlp ffmpeg p7zip
+```
+
+- `unzip`/`tar` ship with macOS, and zip/tar are handled natively in Go
+  anyway.
+- There is no `unrar` formula in homebrew-core, and the `rar` cask has been
+  retired — for full rar support download the official CLI from
+  [rarlab.com](https://www.rarlab.com/) and put `unrar` on your `PATH`.
+  Most rar files extract via `7z` without it.
+
 ## Compile from source
 
 Requirements: **Go 1.21+**.
@@ -162,8 +232,9 @@ CI builds all supported targets automatically — see
   `/newbot`, copy the token
 - Your **numeric Telegram user id** (the admin) — talk to
   [@userinfobot](https://t.me/userinfobot), it replies with your id
-- Optional but recommended: `yt-dlp`, `ffmpeg` (for metadata/thumbnail
-  embedding), `7z` / `unrar` / `unzip` (best archive support)
+- Install the external tools for your OS/arch — see
+  [Runtime dependencies](#runtime-dependencies) (`aria2` is mandatory,
+  `yt-dlp` + `ffmpeg` for video URLs, `7z`/`unrar` for archives)
 
 ### 1. Start aria2 with RPC enabled
 
