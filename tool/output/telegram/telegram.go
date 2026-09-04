@@ -210,13 +210,6 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 		tgBotApi.NewKeyboardButton(i18nLoc.LocText("removeTask")),
 	))
 
-	Keyboards = append(Keyboards, tgBotApi.NewKeyboardButtonRow(
-		tgBotApi.NewKeyboardButton(i18nLoc.LocText("removeDownloadFolderFiles")),
-	))
-	Keyboards = append(Keyboards, tgBotApi.NewKeyboardButtonRow(
-		tgBotApi.NewKeyboardButton(i18nLoc.LocText("moveDownloadFolderFiles")),
-	))
-
 	var numericKeyboard = tgBotApi.NewReplyKeyboard(Keyboards...)
 
 	bot, err := tgBotApi.NewBotAPI(BotKey)
@@ -272,13 +265,6 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 				bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, i18nLoc.LocText("selected")+b[1]))
 			case "7":
 				TMSelectMessageChan <- task[0]
-				bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, i18nLoc.LocText("operationSuccess")))
-			case "8":
-				FileControlChan <- task[0]
-				b := strings.Split(task[0], "~")
-				bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, i18nLoc.LocText("selected")+b[1]))
-			case "9":
-				FileControlChan <- task[0]
 				bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, i18nLoc.LocText("operationSuccess")))
 			case "20":
 				// approve user (admin only): replace the request entirely
@@ -459,31 +445,6 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 					} else {
 						msg.Text = i18nLoc.LocText("noOverTask")
 					}
-				case i18nLoc.LocText("removeDownloadFolderFiles"):
-					//dropErr(removeContents(info.DownloadFolder))
-					isFileChanClean := false
-					for !isFileChanClean {
-						select {
-						case _ = <-FileControlChan:
-						default:
-							isFileChanClean = true
-						}
-					}
-					FileControlChan <- "close"
-					go removeFilesPrint(update.Message.MessageID, bot)
-					FileControlChan <- "file"
-				case i18nLoc.LocText("moveDownloadFolderFiles"):
-					isFileChanClean := false
-					for !isFileChanClean {
-						select {
-						case _ = <-FileControlChan:
-						default:
-							isFileChanClean = true
-						}
-					}
-					FileControlChan <- "close"
-					go copyFilesPrint(update.Message.MessageID, bot)
-					FileControlChan <- "file"
 				default:
 					text := update.Message.Text
 					switch {
