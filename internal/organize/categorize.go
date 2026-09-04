@@ -15,6 +15,7 @@ const (
 	CatDocuments = "documents"
 	CatArchives  = "archives"
 	CatOthers    = "others"
+	CatTorrents  = "torrents"
 )
 
 var videoExts = map[string]bool{
@@ -35,6 +36,10 @@ var archiveExts = map[string]bool{
 	".zip": true, ".rar": true, ".7z": true, ".tar": true, ".gz": true, ".bz2": true, ".xz": true,
 }
 
+var torrentExts = map[string]bool{
+	".torrent": true,
+}
+
 // Categorize maps a file extension to a category label.
 func Categorize(ext string) string {
 	switch {
@@ -46,6 +51,8 @@ func Categorize(ext string) string {
 		return CatDocuments
 	case archiveExts[strings.ToLower(ext)]:
 		return CatArchives
+	case torrentExts[strings.ToLower(ext)]:
+		return CatTorrents
 	default:
 		return CatOthers
 	}
@@ -56,6 +63,7 @@ func IsVideo(name string) bool   { return videoExts[strings.ToLower(filepath.Ext
 func IsAudio(name string) bool   { return audioExts[strings.ToLower(filepath.Ext(name))] }
 func IsDoc(name string) bool     { return docExts[strings.ToLower(filepath.Ext(name))] }
 func IsArchive(name string) bool { return archiveExts[strings.ToLower(filepath.Ext(name))] }
+func IsTorrent(name string) bool { return torrentExts[strings.ToLower(filepath.Ext(name))] }
 
 // Paths holds the resolved library directory layout.
 type Paths struct {
@@ -66,6 +74,7 @@ type Paths struct {
 	Documents string
 	Archives  string
 	Others    string
+	Torrents  string
 }
 
 func (p Paths) dirFor(category string) string {
@@ -80,6 +89,8 @@ func (p Paths) dirFor(category string) string {
 		return p.Documents
 	case CatArchives:
 		return p.Archives
+	case CatTorrents:
+		return p.Torrents
 	case CatOthers:
 		return p.Others
 	default:
@@ -102,6 +113,8 @@ func CategoryLabel(category string) string {
 		return "Documents"
 	case CatArchives:
 		return "Archive"
+	case CatTorrents:
+		return "Torrents"
 	default:
 		return "Other"
 	}

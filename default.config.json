@@ -25,6 +25,8 @@
     "documents": "/media/documents",
     "archives": "/media/archives",
     "others": "/media/others",
+    "torrents": "/media/torrents",
+    "keepTorrent": true,
     "youtube": "/media/YouTube",
     "services": "/media/Services",
     "ytdlpPath": "yt-dlp",

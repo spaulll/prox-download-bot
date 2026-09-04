@@ -78,7 +78,8 @@ media
 ├── music
 ├── documents
 ├── archives
-└── others
+├── others
+└── torrents
 ```
 
 ## yt-dlp layout
@@ -285,6 +286,8 @@ Edit `config.json`:
     "documents": "/media/documents",
     "archives": "/media/archives",
     "others": "/media/others",
+    "torrents": "/media/torrents",
+    "keepTorrent": true,
     "youtube": "/media/YouTube",
     "services": "/media/Services",
     "ytdlpPath": "yt-dlp",
@@ -376,6 +379,8 @@ sudo systemctl enable --now downloadbot
 | `organize.anilist` | AniList anime confirmation (default on) |
 | `organize.deleteArchive` | Delete archives after successful extraction |
 | `organize.movies/series/anime/music/documents/archives/others` | Library roots |
+| `organize.torrents` | `.torrent` file storage (default `<downloadFolder>/torrents`) |
+| `organize.keepTorrent` | Keep the `.torrent` file after its content is organized (default `true`; `false` deletes it) |
 | `organize.youtube` | Base path for YouTube downloads (default `<downloadFolder>/YouTube`) |
 | `organize.services` | Base path for other yt-dlp services (default `<downloadFolder>/Services`) |
 | `organize.ytdlpPath` | yt-dlp binary path |

@@ -526,6 +526,7 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 						_, err = io.Copy(out, resp.Body)
 						dropErr(err)
 						if gid, ok := input.ToolApp.Aria2.Download("temp.torrent"); ok {
+							rememberUploadedTorrent(gid)
 							_ = gid
 							msg.Text = ""
 						}

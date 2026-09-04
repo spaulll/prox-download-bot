@@ -407,6 +407,12 @@ func (a Aria2) FormatGidAndNameFiltered(method int, allow map[string]bool) []map
 	return m
 }
 
+// TellStatusFull exposes the raw aria2 status (incl. FollowedBy for
+// follow-torrent children). Never panics - returns the RPC error instead.
+func (a Aria2) TellStatusFull(gid string) (rpc2.StatusInfo, error) {
+	return aria2Rpc.TellStatus(gid)
+}
+
 func (a Aria2) TellName(gid string) string {
 	info, err := aria2Rpc.TellStatus(gid)
 	if err != nil {

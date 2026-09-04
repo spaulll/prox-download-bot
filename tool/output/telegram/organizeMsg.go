@@ -126,6 +126,7 @@ func buildOrganizer() *organize.Organizer {
 			Documents: cfg.Documents,
 			Archives:  cfg.Archives,
 			Others:    cfg.Others,
+			Torrents:  torrentsDir(),
 		},
 		AniList: cfg.AniList,
 		Post:    anilistPost,
@@ -144,6 +145,7 @@ func libraryRoots() map[string]string {
 		"Documents": cfg.Documents,
 		"Archives":  cfg.Archives,
 		"Others":    cfg.Others,
+		"Torrents":  torrentsDir(),
 	}
 }
 
@@ -206,7 +208,7 @@ func runOrganize(bot *tgBotApi.BotAPI, chatID int64, gid, srcPath, displayName s
 
 	// archive -> extraction pipeline (extract, then re-run organize)
 	if organize.IsArchive(srcPath) {
-		go runArchivePipeline(bot, chatID, org, srcPath, displayName, completedMsg)
+		go runArchivePipeline(bot, chatID, gid, org, srcPath, displayName, completedMsg)
 		return
 	}
 
@@ -227,6 +229,15 @@ func runOrganize(bot *tgBotApi.BotAPI, chatID int64, gid, srcPath, displayName s
 		sendPlain(bot, chatID, "⚠️ Organize failed: "+err.Error())
 		return
 	}
+	// a .torrent file was stored: link its follow-torrent children to the
+	// stored path so the keep toggle can drop it after the content lands
+	if organize.IsTorrent(srcPath) && len(res.Moved) > 0 {
+		stored := res.Moved[len(res.Moved)-1]
+		for _, child := range followedChildren(gid) {
+			rememberTorrentFile(child, stored)
+		}
+	}
+	maybeDropTorrentFile(gid)
 	// success: wipe intermediates, keep only the final summary
 	cleanup()
 	deleteMessages(bot, chatID, completedMsg)

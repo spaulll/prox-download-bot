@@ -89,6 +89,7 @@ func stageRoots() []string {
 	add(cfg.Others)
 	add(cfg.YouTube)
 	add(cfg.Services)
+	add(cfg.Torrents)
 	return roots
 }
 
@@ -123,7 +124,7 @@ func resumeUnprocessedArchives() {
 			continue
 		}
 		// .aria2 control file present = still downloading
-		if _, err := os.Stat(path+".aria2"); err == nil {
+		if _, err := os.Stat(path + ".aria2"); err == nil {
 			continue
 		}
 		resumed++
@@ -131,7 +132,7 @@ func resumeUnprocessedArchives() {
 		logger.Info("recovery: resuming unprocessed archive %s", path)
 		go func(src, displayName string) {
 			org := buildOrganizer()
-			runArchivePipeline(activeBot, organizeChatID(), org, src, displayName, popRecoveryNotice())
+			runArchivePipeline(activeBot, organizeChatID(), "", org, src, displayName, popRecoveryNotice())
 		}(path, name)
 	}
 	if resumed > 0 {

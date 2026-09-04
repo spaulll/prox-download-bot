@@ -19,7 +19,7 @@ import (
 // detect -> extract with live progress -> re-run organize on contents
 // -> final summary. preMsgIDs are intermediate messages (e.g. the "Download
 // completed" notice) deleted together with the progress messages on success.
-func runArchivePipeline(bot *tgBotApi.BotAPI, chatID int64, org *organize.Organizer, srcPath, displayName string, preMsgIDs ...int) {
+func runArchivePipeline(bot *tgBotApi.BotAPI, chatID int64, gid string, org *organize.Organizer, srcPath, displayName string, preMsgIDs ...int) {
 	start := time.Now()
 
 	// "Archive detected" message (plan style)
@@ -170,6 +170,7 @@ func runArchivePipeline(bot *tgBotApi.BotAPI, chatID int64, org *organize.Organi
 	}
 	res.Duration = time.Since(start)
 	sendArchiveSummary(bot, chatID, displayName, res)
+	maybeDropTorrentFile(gid)
 	// success: wipe intermediates, keep only the final summary
 	live.Delete()
 	deleteMessages(bot, chatID, append(preMsgIDs, popRecoveryNotice())...)

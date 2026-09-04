@@ -44,6 +44,11 @@ type OrganizeConfig struct {
 	Documents     string `json:"documents"`
 	Archives      string `json:"archives"`
 	Others        string `json:"others"`
+	// Torrents is the base path for .torrent files sent to the bot
+	Torrents string `json:"torrents"`
+	// KeepTorrent keeps the .torrent file after its content is organized.
+	// Pointer so an omitted key defaults to true (keep).
+	KeepTorrent *bool `json:"keepTorrent"`
 	// YouTube is the base path for yt-dlp YouTube downloads
 	YouTube string `json:"youtube"`
 	// Services is the base path for yt-dlp downloads from other services
