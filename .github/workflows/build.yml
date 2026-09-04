@@ -106,4 +106,3 @@ jobs:
         with:
           files: dist/*
           body_path: release-notes.md
-          generate_release_notes: true
