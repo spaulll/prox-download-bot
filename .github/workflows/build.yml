@@ -86,9 +86,24 @@ jobs:
       - name: List binaries
         run: ls -lh dist/
 
+      - name: Extract changelog section
+        id: changelog
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          # grab the section for this tag (fallback: whole file)
+          awk -v tag="$TAG" '
+            /^## / {
+              keep = ($0 ~ ("## v" tag "([^0-9.]|$)"))
+            }
+            keep { print }
+          ' CHANGELOG.md > release-notes.md
+          # strip the heading line itself (release title already has it)
+          sed -i '1{/^## /d}' release-notes.md
+          cat release-notes.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*
-          body_path: CHANGELOG.md
+          body_path: release-notes.md
           generate_release_notes: true
