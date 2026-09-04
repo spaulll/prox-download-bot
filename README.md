@@ -96,26 +96,178 @@ Services
         └── video.mp4
 ```
 
-## Setup
+## Download (prebuilt binaries)
 
-1. Install: aria2 (with RPC), Go 1.21+, and optionally `yt-dlp` + `ffmpeg`
-   (`7z` / `unrar` / `unzip` for best archive support).
-2. Copy `default.config.json` to `config.json` and fill in:
-   - `input.aria2.aria2-server` / `aria2-key` — Aria2 websocket RPC endpoint
-   - `output.telegram.bot-key` — bot token from @BotFather
-   - `output.telegram.user-id` — your Telegram numeric user id (admin)
-   - `downloadFolder` — where aria2 saves downloads
-   - `organize.*` — media library paths
-3. Build and run:
+No Go toolchain needed — grab a ready-made binary from the
+[**Releases**](https://github.com/spaulll/prox-download-bot/releases) page.
+Each release is built automatically by CI from a `v*` tag.
+
+| File | OS | Arch | Typical use |
+|------|----|------|-------------|
+| `DownloadBot-linux-amd64` | Linux | x86-64 | most servers / VPS / NAS |
+| `DownloadBot-linux-arm64` | Linux | ARM 64-bit | Raspberry Pi 3/4/5 (64-bit OS), ARM VPS |
+| `DownloadBot-linux-armv7` | Linux | ARM 32-bit | older Raspberry Pi (32-bit OS) |
+| `DownloadBot-linux-386` | Linux | x86 32-bit | old 32-bit machines |
+| `DownloadBot-windows-amd64.exe` | Windows | x86-64 | Windows server / desktop |
+| `DownloadBot-darwin-amd64` | macOS | Intel | Intel Macs |
+| `DownloadBot-darwin-arm64` | macOS | Apple Silicon | M1/M2/M3/M4 Macs |
+
+> `windows/arm64` is not provided: the vendored `go-ole` dependency (via
+> `gopsutil`) only supports `windows/386`+`windows/amd64`, so that target
+> cannot compile.
+
+Run it (Linux/macOS):
 
 ```bash
-go build -o prox-download-bot ./cmd/DownloadBot
-./prox-download-bot -c ./config.json
+chmod +x DownloadBot-linux-amd64
+./DownloadBot-linux-amd64 -c ./config.json
 ```
 
-4. Open the bot in Telegram and `/start`.
+On Windows, run `DownloadBot-windows-amd64.exe -c .\config.json` in
+PowerShell/CMD. The binary is fully static — no installation required.
 
-### systemd
+## Compile from source
+
+Requirements: **Go 1.21+**.
+
+```bash
+git clone https://github.com/spaulll/prox-download-bot.git
+cd prox-download-bot
+go build -mod=vendor -trimpath -ldflags "-s -w" -o DownloadBot ./cmd/DownloadBot
+./DownloadBot -c ./config.json
+```
+
+Cross-compile for another machine (examples):
+
+```bash
+# Raspberry Pi (64-bit OS)
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -mod=vendor -o DownloadBot-linux-arm64 ./cmd/DownloadBot
+# Raspberry Pi (32-bit OS)
+CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -mod=vendor -o DownloadBot-linux-armv7 ./cmd/DownloadBot
+# Windows from Linux/macOS
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -mod=vendor -o DownloadBot-windows-amd64.exe ./cmd/DownloadBot
+# macOS Apple Silicon from Linux
+CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -mod=vendor -o DownloadBot-darwin-arm64 ./cmd/DownloadBot
+```
+
+CI builds all supported targets automatically — see
+[`.github/workflows/build.yml`](.github/workflows/build.yml).
+
+## Setup guide
+
+### Prerequisites
+
+- **aria2** with RPC enabled (the actual downloader)
+- A **Telegram bot token** — talk to [@BotFather](https://t.me/BotFather),
+  `/newbot`, copy the token
+- Your **numeric Telegram user id** (the admin) — talk to
+  [@userinfobot](https://t.me/userinfobot), it replies with your id
+- Optional but recommended: `yt-dlp`, `ffmpeg` (for metadata/thumbnail
+  embedding), `7z` / `unrar` / `unzip` (best archive support)
+
+### 1. Start aria2 with RPC enabled
+
+The bot talks to aria2 over its websocket RPC interface:
+
+```bash
+aria2c --enable-rpc --rpc-listen-all --rpc-secret=YOUR_SECRET \
+  --dir=/root/downloads --continue=true --max-concurrent-downloads=5
+```
+
+- `--dir` **must match** `downloadFolder` in `config.json`
+- Note the RPC address (`ws://127.0.0.1:6800/jsonrpc`) and the secret —
+  they go into the config next
+
+### 2. Create the config
+
+```bash
+cp default.config.json config.json
+```
+
+Edit `config.json`:
+
+```json
+{
+  "input": {
+    "aria2": {
+      "aria2-server": "ws://127.0.0.1:6800/jsonrpc",
+      "aria2-key": "YOUR_SECRET"
+    }
+  },
+  "output": {
+    "telegram": {
+      "bot-key": "123456:ABC-DEF_your_bot_token",
+      "user-id": "123456789"
+    }
+  },
+  "downloadFolder": "/root/downloads",
+  "organize": {
+    "enabled": true,
+    "anilist": true,
+    "deleteArchive": false,
+    "movies": "/media/movies",
+    "series": "/media/series",
+    "anime": "/media/anime",
+    "music": "/media/music",
+    "documents": "/media/documents",
+    "archives": "/media/archives",
+    "others": "/media/others",
+    "youtube": "/media/YouTube",
+    "services": "/media/Services",
+    "ytdlpPath": "yt-dlp",
+    "ytdlpQuality": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"
+  }
+}
+```
+
+| Key | What it is |
+|-----|------------|
+| `input.aria2.aria2-server` | aria2 websocket RPC endpoint from step 1 |
+| `input.aria2.aria2-key` | aria2 `--rpc-secret` from step 1 |
+| `output.telegram.bot-key` | token from @BotFather |
+| `output.telegram.user-id` | your numeric id from @userinfobot (bot admin) |
+| `downloadFolder` | must be aria2's `--dir` |
+| `organize.*` | media library roots (see Configuration reference) |
+
+> `config.json` (and `users.json`) are git-ignored — never commit them.
+
+### 3. Create the directories
+
+```bash
+mkdir -p /root/downloads /media/{movies,series,anime,music,documents,archives,others,YouTube,Services}
+```
+
+Adjust to whatever paths you put in `config.json`.
+
+### 4. Run the bot
+
+Prebuilt binary:
+
+```bash
+chmod +x DownloadBot-linux-amd64
+./DownloadBot-linux-amd64 -c ./config.json
+```
+
+Or self-built:
+
+```bash
+go build -o DownloadBot ./cmd/DownloadBot
+./DownloadBot -c ./config.json
+```
+
+The `-c` flag points at your config (default `./config.json`).
+
+### 5. First use in Telegram
+
+1. Open your bot and send `/start`.
+2. If you are not the admin, the admin gets **Approve / Deny** buttons —
+   approve the request, then the user sends `/start` again.
+3. Send the bot an HTTP/FTP link, magnet, torrent file, or a video-page URL
+   (YouTube etc. via yt-dlp).
+4. For torrents/magnets you can pick files interactively; progress appears
+   live, and finished downloads are sorted into the media library.
+
+### 6. Run it as a service (systemd)
 
 ```ini
 [Unit]
@@ -126,7 +278,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/prox-download-bot
-ExecStart=/opt/prox-download-bot/prox-download-bot
+ExecStart=/opt/prox-download-bot/DownloadBot -c /opt/prox-download-bot/config.json
 Restart=on-failure
 RestartSec=5
 
@@ -134,8 +286,13 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-> Rebuild after pulling: `go build -o prox-download-bot ./cmd/DownloadBot`,
-> then `systemctl restart <service>`.
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now downloadbot
+```
+
+> Update later by replacing the binary (or `git pull` + rebuild) and
+> `sudo systemctl restart downloadbot`.
 
 ## Configuration reference
 
