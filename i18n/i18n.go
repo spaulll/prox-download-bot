@@ -1,34 +1,40 @@
 package i18nLoc
 
 import (
+	_ "embed"
 	"encoding/json"
 	"log"
 
 	"github.com/nicksnyder/go-i18n/v2/i18n"
 	"golang.org/x/text/language"
 	"io/ioutil"
-	"os"
 	"path"
 )
 
 var bundle *i18n.Bundle
 var loc *i18n.Localizer
 
-// LocLan loads the local language files (English only)
+// defaultEnglish is embedded in the binary so it runs standalone with no
+// sidecar files.
+//
+//go:embed active.en.json
+var defaultEnglish []byte
+
+// LocLan loads the local language files (English only).
+// Embedded defaults always load; extra *.json files in ./i18n (if present)
+// load on top as overrides.
 func LocLan(locLanguage string) {
 	bundle = i18n.NewBundle(language.English)
 	bundle.RegisterUnmarshalFunc("json", json.Unmarshal)
-	_, err := os.Stat("i18n")
-	if err != nil {
-		err := os.Mkdir("i18n", 0666)
+	if _, err := bundle.ParseMessageFileBytes(defaultEnglish, "active.en.json"); err != nil {
 		dropErr(err)
 	}
-	rd, err := ioutil.ReadDir("i18n")
-	dropErr(err)
-	for _, fi := range rd {
-		if !fi.IsDir() && path.Ext(fi.Name()) == ".json" {
-			_, err := bundle.LoadMessageFile("i18n/" + fi.Name())
-			dropErr(err)
+	if rd, err := ioutil.ReadDir("i18n"); err == nil {
+		for _, fi := range rd {
+			if !fi.IsDir() && path.Ext(fi.Name()) == ".json" {
+				_, err := bundle.LoadMessageFile("i18n/" + fi.Name())
+				dropErr(err)
+			}
 		}
 	}
 	loc = i18n.NewLocalizer(bundle, locLanguage)

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"log"
 	"os"
+	"strconv"
+	"strings"
 )
 
 var info model.Config
@@ -22,6 +24,19 @@ func InitConfig(configPath string) {
 	decoder := json.NewDecoder(filePtr)
 	err = decoder.Decode(&info)
 	dropErr(err)
+	// user-id must be exactly one numeric Telegram ID: several message
+	// paths parse it as a single int64 and crash on anything else.
+	id := strings.TrimSpace(info.Output.Telegram.UserID)
+	if id == "" {
+		log.Panic("output.telegram.user-id is empty: set it to your numeric Telegram user id")
+	}
+	if strings.Contains(id, ",") {
+		log.Panic("output.telegram.user-id must be a single numeric Telegram ID, got: " + info.Output.Telegram.UserID)
+	}
+	if _, err := strconv.ParseInt(id, 10, 64); err != nil {
+		log.Panic("output.telegram.user-id must be numeric, got: " + info.Output.Telegram.UserID)
+	}
+	info.Output.Telegram.UserID = id
 }
 
 func GetLanguage() string {

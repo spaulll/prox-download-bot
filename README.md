@@ -124,7 +124,9 @@ chmod +x DownloadBot-linux-amd64
 ```
 
 On Windows, run `DownloadBot-windows-amd64.exe -c .\config.json` in
-PowerShell/CMD. The binary is fully static — no installation required.
+PowerShell/CMD. The binary is fully static with translations embedded —
+no installation, no sidecar files (an optional `./i18n/*.json` overlay can
+override messages).
 
 ## Runtime dependencies
 
@@ -296,7 +298,7 @@ Edit `config.json`:
 | `input.aria2.aria2-server` | aria2 websocket RPC endpoint from step 1 |
 | `input.aria2.aria2-key` | aria2 `--rpc-secret` from step 1 |
 | `output.telegram.bot-key` | token from @BotFather |
-| `output.telegram.user-id` | your numeric id from @userinfobot (bot admin) |
+| `output.telegram.user-id` | your numeric id from @userinfobot (bot admin — exactly one ID, enforced at startup) |
 | `downloadFolder` | must be aria2's `--dir` |
 | `organize.*` | media library roots (see Configuration reference) |
 
