@@ -168,6 +168,14 @@ func startTelegramLocalDownload(bot *tgBotApi.BotAPI, chats []int64, gid, displa
 		}
 		return
 	}
+	// the staged copy now owns the data (hardlink shares the inode, plain
+	// copy duplicates it): drop the server-side cache copy so 2 GB files do
+	// not linger twice on disk. The server re-fetches on demand if needed.
+	if err := os.Remove(src); err != nil && !os.IsNotExist(err) {
+		logger.Error("telegram server copy cleanup failed for %s: %v", src, err)
+	} else {
+		logger.Info("telegram server copy cleaned: %s", src)
+	}
 	logger.Info("telegram local fetch completed: %s (%d bytes)", displayName, total)
 	live.Delete()
 	runOrganizeDual(bot, chats, gid, dest, displayName, false)

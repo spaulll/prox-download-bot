@@ -246,3 +246,26 @@ func TestLocalFetchHelpers(t *testing.T) {
 		t.Fatalf("huge-file timeout = %v, want 3h cap", got)
 	}
 }
+
+func TestLinkOrCopy(t *testing.T) {
+	dir := t.TempDir()
+	src := dir + "/src.bin"
+	if err := os.WriteFile(src, []byte("hello-telegram"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dst := dir + "/sub/dst.bin"
+	if err := linkOrCopy(src, dst); err != nil {
+		t.Fatalf("linkOrCopy: %v", err)
+	}
+	b, err := os.ReadFile(dst)
+	if err != nil || string(b) != "hello-telegram" {
+		t.Fatalf("dst content = %q, err = %v", b, err)
+	}
+	// server-copy cleanup must not destroy staged data
+	if err := os.Remove(src); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(dst); err != nil || string(b) != "hello-telegram" {
+		t.Fatalf("dst after src remove = %q, err = %v", b, err)
+	}
+}
