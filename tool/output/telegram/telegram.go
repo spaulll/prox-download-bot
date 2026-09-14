@@ -896,7 +896,7 @@ func handleTelegramFile(bot *tgBotApi.BotAPI, senderID, chatID int64, senderUser
 			Status: "downloading",
 		})
 		notifyUserAdded(senderID, senderUsername, out)
-		go startTelegramLocalDownload(bot, taskChats(senderID, chatID), gid, out, fileID)
+		go startTelegramLocalDownload(bot, taskChats(senderID, chatID), gid, out, fileID, senderID, chatID)
 		return ""
 	}
 	url, err := telegramDirectURL(bot, fileID)

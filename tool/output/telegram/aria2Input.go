@@ -436,11 +436,17 @@ func activeRefresh(requestChatID int64, chatMsgID int, bot *tgBotApi.BotAPI, tic
 	allow := allowGidsFor(requestChatID)
 	refreshPath := func(MessageID int, bot *tgBotApi.BotAPI, ticker *time.Ticker) int {
 		res := input.ToolApp.Aria2.FormatTellActiveFiltered(allow)
-		//log.Println(res, len(res))
+		local := formatLocalActive(requestChatID)
 		text := ""
-		if res != "" {
+		empty := res == "" && local == ""
+		switch {
+		case res != "" && local != "":
+			text = res + "\n\n" + local
+		case res != "":
 			text = res
-		} else {
+		case local != "":
+			text = local
+		default:
 			text = i18nLoc.LocText("noActiveTask")
 		}
 		if MessageID == 0 {
@@ -452,14 +458,14 @@ func activeRefresh(requestChatID int64, chatMsgID int, bot *tgBotApi.BotAPI, tic
 				ticker.Stop()
 				return -1
 			}
-			if text == i18nLoc.LocText("noActiveTask") {
+			if empty {
 				ticker.Stop()
 				return -1
 			} else {
 				return res.MessageID
 			}
 		} else {
-			if text == i18nLoc.LocText("noActiveTask") {
+			if empty {
 				bot.Send(tgBotApi.NewDeleteMessage(requestChatID, MessageID))
 				ticker.Stop()
 				return -1

@@ -227,15 +227,6 @@ func TestTelegramFileURL(t *testing.T) {
 }
 
 func TestLocalFetchHelpers(t *testing.T) {
-	if got := percentOf(50, 100); got != 50 {
-		t.Fatalf("percentOf(50,100) = %v, want 50", got)
-	}
-	if got := percentOf(0, 0); got != 0 {
-		t.Fatalf("percentOf(0,0) = %v, want 0", got)
-	}
-	if got := percentOf(200, 100); got != 100 {
-		t.Fatalf("percentOf(200,100) = %v, want 100", got)
-	}
 	if got := localFetchTimeout(0); got != 30*time.Minute {
 		t.Fatalf("unknown-size timeout = %v, want 30m", got)
 	}
@@ -267,5 +258,34 @@ func TestLinkOrCopy(t *testing.T) {
 	}
 	if b, err := os.ReadFile(dst); err != nil || string(b) != "hello-telegram" {
 		t.Fatalf("dst after src remove = %q, err = %v", b, err)
+	}
+}
+
+func TestFormatLocalActive(t *testing.T) {
+	i18nLoc.LocLan("en")
+	logger.InitLog("", "", "info")
+	adminIDs = []int64{1}
+	registerLocalFetch("tg1", "a_show.mkv", 100, 100)
+	registerLocalFetch("tg2", "b_movie.mp4", 200, 200)
+	t.Cleanup(func() {
+		unregisterLocalFetch("tg1")
+		unregisterLocalFetch("tg2")
+	})
+	all := formatLocalActive(1)
+	if !strings.Contains(all, `a\_show`) || !strings.Contains(all, `b\_movie`) {
+		t.Fatalf("admin should see all fetches:\n%s", all)
+	}
+	own := formatLocalActive(100)
+	if !strings.Contains(own, `a\_show`) || strings.Contains(own, `b\_movie`) {
+		t.Fatalf("user 100 should see only own fetch:\n%s", own)
+	}
+	if got := formatLocalActive(999); got != "" {
+		t.Fatalf("stranger should see nothing, got:\n%s", got)
+	}
+	// underscore names must be markdown-escaped (list sends with Markdown)
+	registerLocalFetch("tg3", "my_file_name.mkv", 100, 100)
+	defer unregisterLocalFetch("tg3")
+	if got := formatLocalActive(100); !strings.Contains(got, `my\_file\_name`) {
+		t.Fatalf("fetch name not markdown-escaped:\n%s", got)
 	}
 }

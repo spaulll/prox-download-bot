@@ -16,10 +16,93 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
 	"time"
 
 	tgBotApi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
+
+// localFetch tracks one in-progress server-side Telegram fetch so the
+// "Downloading" list can show it next to aria2 tasks (which know nothing
+// about these fetches).
+type localFetch struct {
+	gid    string
+	name   string
+	userID int64
+	chatID int64
+	total  int64
+	start  time.Time
+}
+
+var (
+	localActiveMu sync.Mutex
+	localActive   = map[string]*localFetch{}
+)
+
+// registerLocalFetch announces a fetch; unregisterLocalFetch withdraws it.
+func registerLocalFetch(gid, name string, userID, chatID int64) {
+	localActiveMu.Lock()
+	defer localActiveMu.Unlock()
+	localActive[gid] = &localFetch{gid: gid, name: name, userID: userID, chatID: chatID, start: time.Now()}
+}
+
+func setLocalFetchTotal(gid string, total int64) {
+	localActiveMu.Lock()
+	defer localActiveMu.Unlock()
+	if f, ok := localActive[gid]; ok && total > 0 {
+		f.total = total
+	}
+}
+
+func unregisterLocalFetch(gid string) {
+	localActiveMu.Lock()
+	defer localActiveMu.Unlock()
+	delete(localActive, gid)
+}
+
+// formatLocalActive renders visible in-progress fetches for the "Downloading"
+// list. Admins see all; regular users only their own (owner or origin chat).
+func formatLocalActive(requester int64) string {
+	localActiveMu.Lock()
+	fetches := make([]*localFetch, 0, len(localActive))
+	for _, f := range localActive {
+		fetches = append(fetches, f)
+	}
+	localActiveMu.Unlock()
+	if len(fetches) == 0 {
+		return ""
+	}
+	admin := isAdminID(requester)
+	visible := fetches[:0]
+	for _, f := range fetches {
+		if admin || f.userID == requester || f.chatID == requester {
+			visible = append(visible, f)
+		}
+	}
+	if len(visible) == 0 {
+		return ""
+	}
+	sort.Slice(visible, func(i, j int) bool { return visible[i].gid < visible[j].gid })
+	var b strings.Builder
+	for i, f := range visible {
+		if i > 0 {
+			b.WriteString("\n\n")
+		}
+		size := "…"
+		if f.total > 0 {
+			size = typeTrans.Byte2Readable(float64(f.total))
+		}
+		fmt.Fprintf(&b, "*Filename:* `%s`\n📥 Fetching from Telegram...\n*Size:* %s *Elapsed:* %s\n*GID:* `%s`",
+			escapeMarkdown(f.name), size, formatDuration(time.Since(f.start)), f.gid)
+	}
+	return b.String()
+}
+
+// spinnerFrames animates the fetching indicator (byte progress is unknowable
+// in local mode, but elapsed time proves the fetch is alive).
+var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
 // localFetchTimeout bounds the server-side fetch wait. Assumes at least
 // ~50KB/s, clamped to [10min, 3h] (30min when the size is unknown).
@@ -38,13 +121,17 @@ func localFetchTimeout(total int64) time.Duration {
 }
 
 // fetchTelegramLocalFile waits for the local Bot API server to finish
-// downloading fileID, reporting (downloaded, total) bytes along the way.
-// Returns the absolute server-side path and the total size.
-func fetchTelegramLocalFile(bot *tgBotApi.BotAPI, fileID string, onProgress func(downloaded, total int64)) (string, int64, error) {
+// downloading fileID, ticking roughly once a second so the caller can
+// animate liveness. Returns the absolute server-side path and total size.
+//
+// NOTE: getFile only reveals file_path once the fetch COMPLETES, so true
+// byte progress is unknowable here - callers must not render percentages.
+func fetchTelegramLocalFile(bot *tgBotApi.BotAPI, gid, fileID string, onTick func()) (string, int64, error) {
 	// learn the total size first (present even before the fetch completes)
 	var total int64
 	if f, err := bot.GetFile(tgBotApi.FileConfig{FileID: fileID}); err == nil && f.FileSize > 0 {
 		total = int64(f.FileSize)
+		setLocalFetchTotal(gid, total)
 	}
 	deadline := time.Now().Add(localFetchTimeout(total))
 	var lastSize int64 = -1
@@ -53,24 +140,27 @@ func fetchTelegramLocalFile(bot *tgBotApi.BotAPI, fileID string, onProgress func
 		f, err := bot.GetFile(tgBotApi.FileConfig{FileID: fileID})
 		if err != nil {
 			logger.Debug("local getFile failed: %v", err)
+			onTick()
 			time.Sleep(time.Second)
 			continue
 		}
 		if f.FileSize > 0 {
 			total = int64(f.FileSize)
+			setLocalFetchTotal(gid, total)
 		}
 		if f.FilePath == "" {
-			onProgress(0, total)
+			onTick()
 			time.Sleep(time.Second)
 			continue
 		}
 		st, err := os.Stat(f.FilePath)
 		if err != nil || st.IsDir() {
+			onTick()
 			time.Sleep(time.Second)
 			continue
 		}
 		sz := st.Size()
-		onProgress(sz, total)
+		onTick()
 		if total > 0 && sz >= total {
 			return f.FilePath, total, nil
 		}
@@ -117,40 +207,38 @@ func linkOrCopy(src, dst string) error {
 // startTelegramLocalDownload fetches a Telegram file through the local Bot
 // API server with live progress, then runs the normal organize pipeline.
 // Runs asynchronously (call in a goroutine).
-func startTelegramLocalDownload(bot *tgBotApi.BotAPI, chats []int64, gid, displayName, fileID string) {
+func startTelegramLocalDownload(bot *tgBotApi.BotAPI, chats []int64, gid, displayName, fileID string, userID, chatID int64) {
 	chats = dedupChats(chats)
-	live := NewDualProgressMsg(bot, chats, "⬇️ Downloading\n"+taskProgressBar(0)+"\n"+displayName)
+	registerLocalFetch(gid, displayName, userID, chatID)
+	defer unregisterLocalFetch(gid)
+	live := NewDualProgressMsg(bot, chats, "⬇️ Downloading\n"+displayName)
 	start := time.Now()
+	tick := 0
 	var lastText string
-	src, total, err := fetchTelegramLocalFile(bot, fileID, func(d, t int64) {
-		lines := []string{"⬇️ Downloading", taskProgressBar(percentOf(d, t))}
-		if t > 0 {
-			lines = append(lines, fmt.Sprintf("Downloaded: %s of %s",
-				typeTrans.Byte2Readable(float64(d)),
-				typeTrans.Byte2Readable(float64(t))))
-		} else if d > 0 {
-			lines = append(lines, "Downloaded: "+typeTrans.Byte2Readable(float64(d)))
+	update := func() {
+		frame := spinnerFrames[tick%len(spinnerFrames)]
+		tick++
+		localActiveMu.Lock()
+		var total int64
+		if f, ok := localActive[gid]; ok {
+			total = f.total
 		}
-		if elapsed := time.Since(start); elapsed >= 2*time.Second && d > 0 {
-			rate := float64(d) / elapsed.Seconds()
-			lines = append(lines, "Speed: "+typeTrans.Byte2Readable(rate)+"/s")
-			if eta := remainingETA(start, d, t); eta > 0 {
-				lines = append(lines, "ETA: "+formatDuration(eta))
-			}
+		localActiveMu.Unlock()
+		size := "…"
+		if total > 0 {
+			size = typeTrans.Byte2Readable(float64(total))
 		}
-		text := ""
-		for i, l := range lines {
-			if i > 0 {
-				text += "\n"
-			}
-			text += l
-		}
-		text += "\n" + displayName
+		text := "⬇️ Downloading\n\n" +
+			"📥 Fetching from Telegram " + frame + "\n" +
+			"📦 Size: " + size + "\n" +
+			"⏱ Elapsed: " + formatDuration(time.Since(start)) + "\n\n" +
+			displayName
 		if text != lastText {
 			live.Update(text)
 			lastText = text
 		}
-	})
+	}
+	src, total, err := fetchTelegramLocalFile(bot, gid, fileID, update)
 	if err != nil {
 		logger.Error("telegram local fetch failed for %s: %v", displayName, err)
 		taskStore.SetStatus(gid, "failed")
@@ -179,16 +267,4 @@ func startTelegramLocalDownload(bot *tgBotApi.BotAPI, chats []int64, gid, displa
 	logger.Info("telegram local fetch completed: %s (%d bytes)", displayName, total)
 	live.Delete()
 	runOrganizeDual(bot, chats, gid, dest, displayName, false)
-}
-
-// percentOf renders 0-100 safely for progress display.
-func percentOf(done, total int64) float64 {
-	if total <= 0 || done < 0 {
-		return 0
-	}
-	p := float64(done) * 100.0 / float64(total)
-	if p > 100 {
-		return 100
-	}
-	return p
 }
