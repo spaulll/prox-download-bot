@@ -10,3 +10,6 @@ test
 users.json
 tasks.json
 DownloadBot
+
+telegram-bot-api
+run-tg-api.sh
