@@ -448,6 +448,7 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 							text, markup := buildApprovedUsersList()
 							edit := tgBotApi.NewEditMessageText(update.CallbackQuery.Message.Chat.ID,
 								update.CallbackQuery.Message.MessageID, text)
+							edit.ParseMode = "Markdown"
 							if markup != nil {
 								edit.ReplyMarkup = markup
 							} else {
