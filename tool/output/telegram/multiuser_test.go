@@ -265,8 +265,8 @@ func TestFormatLocalActive(t *testing.T) {
 	i18nLoc.LocLan("en")
 	logger.InitLog("", "", "info")
 	adminIDs = []int64{1}
-	registerLocalFetch("tg1", "a_show.mkv", 100, 100)
-	registerLocalFetch("tg2", "b_movie.mp4", 200, 200)
+	registerLocalFetch("tg1", "a_show.mkv", 100, 100, 0, nil, nil)
+	registerLocalFetch("tg2", "b_movie.mp4", 200, 200, 0, nil, nil)
 	t.Cleanup(func() {
 		unregisterLocalFetch("tg1")
 		unregisterLocalFetch("tg2")
@@ -283,16 +283,57 @@ func TestFormatLocalActive(t *testing.T) {
 		t.Fatalf("stranger should see nothing, got:\n%s", got)
 	}
 	// underscore names must be markdown-escaped (list sends with Markdown)
-	registerLocalFetch("tg3", "my_file_name.mkv", 100, 100)
+	registerLocalFetch("tg3", "my_file_name.mkv", 100, 100, 0, nil, nil)
 	defer unregisterLocalFetch("tg3")
 	if got := formatLocalActive(100); !strings.Contains(got, "`my_file_name.mkv`") {
 		t.Fatalf("fetch name mangled, want raw name in backticks:\n%s", got)
 	}
 	// names sit inside backticks (literal span): escaping would show raw, so
 	// only backticks themselves are stripped, nothing escaped
-	registerLocalFetch("tg4", "evil`code.mkv", 100, 100)
+	registerLocalFetch("tg4", "evil`code.mkv", 100, 100, 0, nil, nil)
 	defer unregisterLocalFetch("tg4")
 	if got := formatLocalActive(100); strings.Contains(got, "`evil`") || !strings.Contains(got, "evilcode.mkv") {
 		t.Fatalf("backtick in name not neutralized:\n%s", got)
+	}
+}
+
+func TestTelegramHistoryAndCancel(t *testing.T) {
+	i18nLoc.LocLan("en")
+	logger.InitLog("", "", "info")
+	adminIDs = []int64{1}
+	taskStore = users.NewTaskStore(t.TempDir() + "/tasks.json")
+	taskStore.Add(users.Task{GID: "tg9", UserID: 100, ChatID: 100, Link: "tg:file:show.mkv", Name: "show.mkv", Engine: "telegram", Status: "downloading"})
+	taskStore.SetSize("tg9", 1024)
+	taskStore.SetStatus("tg9", "completed")
+	if task, _ := taskStore.Get("tg9"); task.FinishedAt.IsZero() || task.Size != 1024 {
+		t.Fatalf("completed task missing finish stamp/size: %+v", task)
+	}
+	taskStore.Add(users.Task{GID: "g9", UserID: 100, Link: "http://x", Engine: "aria2", Status: "completed"})
+	taskStore.Add(users.Task{GID: "yt9", UserID: 200, Link: "http://y", Engine: "ytdlp", Status: "failed"})
+
+	h := formatTelegramHistory(100)
+	if !strings.Contains(h, "show.mkv") || strings.Contains(h, "http://x") || strings.Contains(h, "http://y") {
+		t.Fatalf("user history wrong:\n%s", h)
+	}
+	h = formatTelegramHistory(1)
+	if !strings.Contains(h, "show.mkv") || !strings.Contains(h, "http://y") {
+		t.Fatalf("admin history should include all non-aria2:\n%s", h)
+	}
+
+	// cancelling a live fetch forgets it
+	registerLocalFetch("tg9", "show.mkv", 100, 100, 1024, nil, nil)
+	if !cancelTelegramFetch("tg9") {
+		t.Fatal("expected live cancel to report true")
+	}
+	if _, ok := taskStore.Get("tg9"); ok {
+		t.Fatal("cancelled task record should be gone")
+	}
+	if cancelTelegramFetch("tg9") {
+		t.Fatal("second cancel should report false")
+	}
+	// forgetting a history entry
+	taskStore.Remove("yt9")
+	if _, ok := taskStore.Get("yt9"); ok {
+		t.Fatal("removed task should be gone")
 	}
 }

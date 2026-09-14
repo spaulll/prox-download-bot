@@ -12,6 +12,7 @@ import (
 	"DownloadBot/internal/config"
 	"DownloadBot/tool/typeTrans"
 	logger "DownloadBot/tool/zap"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -26,7 +27,8 @@ import (
 
 // localFetch tracks one in-progress server-side Telegram fetch so the
 // "Downloading" list can show it next to aria2 tasks (which know nothing
-// about these fetches).
+// about these fetches). Cancel stops the wait; live lets removal drop the
+// progress messages immediately.
 type localFetch struct {
 	gid    string
 	name   string
@@ -34,6 +36,8 @@ type localFetch struct {
 	chatID int64
 	total  int64
 	start  time.Time
+	cancel context.CancelFunc
+	live   *DualProgressMsg
 }
 
 var (
@@ -42,10 +46,10 @@ var (
 )
 
 // registerLocalFetch announces a fetch; unregisterLocalFetch withdraws it.
-func registerLocalFetch(gid, name string, userID, chatID int64) {
+func registerLocalFetch(gid, name string, userID, chatID, total int64, cancel context.CancelFunc, live *DualProgressMsg) {
 	localActiveMu.Lock()
 	defer localActiveMu.Unlock()
-	localActive[gid] = &localFetch{gid: gid, name: name, userID: userID, chatID: chatID, start: time.Now()}
+	localActive[gid] = &localFetch{gid: gid, name: name, userID: userID, chatID: chatID, total: total, start: time.Now(), cancel: cancel, live: live}
 }
 
 func setLocalFetchTotal(gid string, total int64) {
@@ -60,6 +64,30 @@ func unregisterLocalFetch(gid string) {
 	localActiveMu.Lock()
 	defer localActiveMu.Unlock()
 	delete(localActive, gid)
+}
+
+// cancelTelegramFetch aborts an in-progress fetch: the wait loop exits,
+// progress messages are dropped and the task record is forgotten. Reports
+// whether a live fetch was actually cancelled (false = already gone, the
+// caller should forget a history entry instead).
+func cancelTelegramFetch(gid string) bool {
+	localActiveMu.Lock()
+	f, ok := localActive[gid]
+	if !ok {
+		localActiveMu.Unlock()
+		return false
+	}
+	cancel, live := f.cancel, f.live
+	localActiveMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if live != nil {
+		live.Delete()
+	}
+	unregisterLocalFetch(gid)
+	taskStore.Remove(gid)
+	return true
 }
 
 // formatLocalActive renders visible in-progress fetches for the "Downloading"
@@ -130,7 +158,7 @@ func localFetchTimeout(total int64) time.Duration {
 //
 // NOTE: getFile only reveals file_path once the fetch COMPLETES, so true
 // byte progress is unknowable here - callers must not render percentages.
-func fetchTelegramLocalFile(bot *tgBotApi.BotAPI, gid, fileID string, onTick func()) (string, int64, error) {
+func fetchTelegramLocalFile(ctx context.Context, bot *tgBotApi.BotAPI, gid, fileID string, onTick func()) (string, int64, error) {
 	// learn the total size first (present even before the fetch completes)
 	var total int64
 	if f, err := bot.GetFile(tgBotApi.FileConfig{FileID: fileID}); err == nil && f.FileSize > 0 {
@@ -141,11 +169,18 @@ func fetchTelegramLocalFile(bot *tgBotApi.BotAPI, gid, fileID string, onTick fun
 	var lastSize int64 = -1
 	stable := 0
 	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return "", total, fmt.Errorf("download cancelled")
+		default:
+		}
 		f, err := bot.GetFile(tgBotApi.FileConfig{FileID: fileID})
 		if err != nil {
 			logger.Debug("local getFile failed: %v", err)
 			onTick()
-			time.Sleep(time.Second)
+			if !sleepCtx(ctx, time.Second) {
+				return "", total, fmt.Errorf("download cancelled")
+			}
 			continue
 		}
 		if f.FileSize > 0 {
@@ -154,13 +189,17 @@ func fetchTelegramLocalFile(bot *tgBotApi.BotAPI, gid, fileID string, onTick fun
 		}
 		if f.FilePath == "" {
 			onTick()
-			time.Sleep(time.Second)
+			if !sleepCtx(ctx, time.Second) {
+				return "", total, fmt.Errorf("download cancelled")
+			}
 			continue
 		}
 		st, err := os.Stat(f.FilePath)
 		if err != nil || st.IsDir() {
 			onTick()
-			time.Sleep(time.Second)
+			if !sleepCtx(ctx, time.Second) {
+				return "", total, fmt.Errorf("download cancelled")
+			}
 			continue
 		}
 		sz := st.Size()
@@ -178,9 +217,23 @@ func fetchTelegramLocalFile(bot *tgBotApi.BotAPI, gid, fileID string, onTick fun
 			}
 			lastSize = sz
 		}
-		time.Sleep(time.Second)
+		if !sleepCtx(ctx, time.Second) {
+			return "", total, fmt.Errorf("download cancelled")
+		}
 	}
 	return "", total, fmt.Errorf("timed out waiting for Telegram download")
+}
+
+// sleepCtx sleeps d, reporting false early when ctx is cancelled.
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
 }
 
 // linkOrCopy places src at dst via hardlink when possible (same filesystem:
@@ -210,12 +263,17 @@ func linkOrCopy(src, dst string) error {
 
 // startTelegramLocalDownload fetches a Telegram file through the local Bot
 // API server with live progress, then runs the normal organize pipeline.
-// Runs asynchronously (call in a goroutine).
-func startTelegramLocalDownload(bot *tgBotApi.BotAPI, chats []int64, gid, displayName, fileID string, userID, chatID int64) {
+// Runs asynchronously (call in a goroutine). fileSize is the size reported
+// by the Telegram message itself (getFile may not know it yet).
+func startTelegramLocalDownload(bot *tgBotApi.BotAPI, chats []int64, gid, displayName, fileID string, userID, chatID int64, fileSize int) {
 	chats = dedupChats(chats)
-	registerLocalFetch(gid, displayName, userID, chatID)
-	defer unregisterLocalFetch(gid)
+	ctx, cancel := context.WithCancel(context.Background())
 	live := NewDualProgressMsg(bot, chats, "⬇️ Downloading\n"+displayName)
+	registerLocalFetch(gid, displayName, userID, chatID, int64(fileSize), cancel, live)
+	defer func() {
+		live.Delete()
+		unregisterLocalFetch(gid)
+	}()
 	start := time.Now()
 	tick := 0
 	var lastText string
@@ -242,15 +300,26 @@ func startTelegramLocalDownload(bot *tgBotApi.BotAPI, chats []int64, gid, displa
 			lastText = text
 		}
 	}
-	src, total, err := fetchTelegramLocalFile(bot, gid, fileID, update)
+	src, total, err := fetchTelegramLocalFile(ctx, bot, gid, fileID, update)
 	if err != nil {
 		logger.Error("telegram local fetch failed for %s: %v", displayName, err)
+		if err.Error() == "download cancelled" {
+			// removal already handled by the canceller; just go quiet
+			return
+		}
 		taskStore.SetStatus(gid, "failed")
 		if live != nil {
 			live.Update("⚠️ Download failed\n" + err.Error() + "\n" + displayName)
 		}
 		return
 	}
+	// cancelled while staging/organizing was queued: discard instead of
+	// delivering a surprise result
+	if _, ok := taskStore.Get(gid); !ok {
+		_ = os.Remove(src)
+		return
+	}
+	taskStore.SetSize(gid, total)
 	dest := uniqueFilePath(filepath.Join(config.GetDownloadFolder(), safeOutName(displayName)))
 	if err := linkOrCopy(src, dest); err != nil {
 		logger.Error("telegram local stage failed for %s: %v", displayName, err)

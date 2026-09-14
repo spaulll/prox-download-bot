@@ -7,14 +7,16 @@ import (
 
 // Task is a download task owned by a user.
 type Task struct {
-	GID     string    `json:"gid"`
-	UserID  int64     `json:"userId"`
-	ChatID  int64     `json:"chatId,omitempty"`
-	Link    string    `json:"link"`
-	Name    string    `json:"name"`
-	AddedAt time.Time `json:"addedAt"`
-	Engine  string    `json:"engine"` // aria2 | ytdlp
-	Status  string    `json:"status"` // downloading | completed | failed | removed
+	GID        string    `json:"gid"`
+	UserID     int64     `json:"userId"`
+	ChatID     int64     `json:"chatId,omitempty"`
+	Link       string    `json:"link"`
+	Name       string    `json:"name"`
+	AddedAt    time.Time `json:"addedAt"`
+	FinishedAt time.Time `json:"finishedAt,omitempty"`
+	Size       int64     `json:"size,omitempty"`
+	Engine     string    `json:"engine"` // aria2 | ytdlp | telegram
+	Status     string    `json:"status"` // downloading | completed | failed | removed
 }
 
 // TaskStore maps gids to the user who added them (in-memory + JSON persist).
@@ -49,15 +51,42 @@ func (t *TaskStore) Get(gid string) (Task, bool) {
 	return task, ok
 }
 
-// SetStatus updates the status of a gid.
+// SetStatus updates the status of a gid, stamping FinishedAt on terminal
+// states so non-aria2 tasks can render history entries.
 func (t *TaskStore) SetStatus(gid, status string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if task, ok := t.tasks[gid]; ok {
 		task.Status = status
+		switch status {
+		case "completed", "failed", "removed":
+			if task.FinishedAt.IsZero() {
+				task.FinishedAt = time.Now()
+			}
+		}
 		t.tasks[gid] = task
 		t.persist()
 	}
+}
+
+// SetSize records the total size of a gid.
+func (t *TaskStore) SetSize(gid string, size int64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if task, ok := t.tasks[gid]; ok {
+		task.Size = size
+		t.tasks[gid] = task
+		t.persist()
+	}
+}
+
+// Remove forgets a gid entirely (used for revoking/cancelling non-aria2
+// tasks and clearing their history entries).
+func (t *TaskStore) Remove(gid string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.tasks, gid)
+	t.persist()
 }
 
 // ByUser returns the tasks of one user (newest first).

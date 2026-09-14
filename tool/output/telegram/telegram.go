@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -250,6 +251,129 @@ func escapeMarkdown(s string) string {
 	return r.Replace(s)
 }
 
+// nonAria2History returns finished non-aria2 tasks (telegram forwards,
+// yt-dlp) visible to userID: admins see all, users only their own. Active
+// downloads are excluded (they show in the Downloading list / live views).
+func nonAria2History(userID int64) []users.Task {
+	var all []users.Task
+	if isAdminID(userID) {
+		all = taskStore.All()
+	} else {
+		all = taskStore.ByUser(userID)
+	}
+	out := make([]users.Task, 0)
+	for _, t := range all {
+		if t.Engine == "aria2" {
+			continue
+		}
+		if t.Status == "completed" || t.Status == "failed" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// formatTelegramHistory renders history entries for non-aria2 tasks in the
+// Finished view style.
+func formatTelegramHistory(userID int64) string {
+	tasks := nonAria2History(userID)
+	if len(tasks) == 0 {
+		return ""
+	}
+	statusName := map[string]string{
+		"completed": i18nLoc.LocText("complete"),
+		"failed":    i18nLoc.LocText("failed"),
+	}
+	parts := make([]string, 0, len(tasks))
+	for _, t := range tasks {
+		name := t.Name
+		if name == "" {
+			name = t.Link
+		}
+		entry := fmt.Sprintf("*Filename:* `%s`\n*Status:* %s",
+			strings.ReplaceAll(name, "`", ""), statusName[t.Status])
+		if t.Size > 0 {
+			entry += fmt.Sprintf("\n*Downloaded:* %s", typeTrans.Byte2Readable(float64(t.Size)))
+		}
+		entry += fmt.Sprintf("\n*GID:* `%s`", t.GID)
+		if !t.FinishedAt.IsZero() {
+			entry += fmt.Sprintf("\n*Finished:* %s", t.FinishedAt.Format("02 Jan, 15:04"))
+		}
+		parts = append(parts, entry)
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+// telegramRemoveEntries lists non-aria2 tasks removable via the Remove
+// picker: in-progress telegram fetches (cancellable) plus finished
+// telegram/ytdlp entries (forgotten). ytdlp-active is excluded (uncancellable).
+func telegramRemoveEntries(userID int64) []map[string]string {
+	out := make([]map[string]string, 0)
+	localActiveMu.Lock()
+	gids := make([]string, 0, len(localActive))
+	for gid := range localActive {
+		gids = append(gids, gid)
+	}
+	localActiveMu.Unlock()
+	sort.Strings(gids)
+	for _, gid := range gids {
+		t, ok := taskStore.Get(gid)
+		if !ok {
+			continue
+		}
+		if !isAdminID(userID) && t.UserID != userID {
+			continue
+		}
+		name := t.Name
+		if name == "" {
+			name = t.Link
+		}
+		out = append(out, map[string]string{"GID": gid, "Name": name})
+	}
+	for _, t := range nonAria2History(userID) {
+		name := t.Name
+		if name == "" {
+			name = t.Link
+		}
+		out = append(out, map[string]string{"GID": t.GID, "Name": name})
+	}
+	return out
+}
+
+// refreshRemovePicker re-renders the remove picker in place after a
+// non-aria2 entry was removed (aria2 removals surface via its own events).
+func refreshRemovePicker(bot *tgBotApi.BotAPI, update tgBotApi.Update, clicker int64) {
+	if update.CallbackQuery.Message == nil {
+		return
+	}
+	InlineKeyboards, text := buildRemovePicker(clicker, allowGidsFor(clicker))
+	if len(InlineKeyboards) == 0 {
+		text = i18nLoc.LocText("noOverTask")
+	} else {
+		text = i18nLoc.LocText("removeWhichOne") + "\n" + text
+	}
+	edit := tgBotApi.NewEditMessageTextAndMarkup(update.CallbackQuery.Message.Chat.ID,
+		update.CallbackQuery.Message.MessageID, text,
+		tgBotApi.NewInlineKeyboardMarkup(InlineKeyboards...))
+	if _, err := bot.Send(edit); err != nil {
+		logger.Debug("refresh remove picker failed: %v", err)
+	}
+}
+
+// buildRemovePicker builds the combined remove picker (aria2 active/waiting
+// plus removable non-aria2 entries) with continuous numbering.
+func buildRemovePicker(userID int64, allowGids map[string]bool) ([][]tgBotApi.InlineKeyboardButton, string) {
+	entries := append(
+		input.ToolApp.Aria2.FormatGidAndNameFiltered(0, allowGids),
+		input.ToolApp.Aria2.FormatGidAndNameFiltered(1, allowGids)...,
+	)
+	entries = append(entries, telegramRemoveEntries(userID)...)
+	return createFilesInlineKeyBoardRow(filesInlineKeyboards{
+		GidAndName: entries,
+		Data:       "3",
+	})
+}
+
 // buildApprovedUsersList renders the admin user-management list with one
 // Remove button per user. Returns nil markup when the list is empty.
 func buildApprovedUsersList() (string, *tgBotApi.InlineKeyboardMarkup) {
@@ -392,8 +516,22 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 					bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, "⛔ You can only control your own tasks"))
 					break
 				}
-				input.ForceRemoveTask(task[0])
-				bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, i18nLoc.LocText("taskNowRemove")))
+				if t, ok := taskStore.Get(task[0]); ok && t.Engine == "telegram" {
+					// telegram fetch: cancel live fetch, forget history entry
+					if !cancelTelegramFetch(task[0]) {
+						taskStore.Remove(task[0])
+					}
+					bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, i18nLoc.LocText("taskNowRemove")))
+					refreshRemovePicker(bot, update, clicker)
+				} else if t, ok := taskStore.Get(task[0]); ok && t.Engine == "ytdlp" {
+					// ytdlp has no cancellable handle: forget the record only
+					taskStore.Remove(task[0])
+					bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, i18nLoc.LocText("taskNowRemove")))
+					refreshRemovePicker(bot, update, clicker)
+				} else {
+					input.ForceRemoveTask(task[0])
+					bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, i18nLoc.LocText("taskNowRemove")))
+				}
 			case "4":
 				if isAdminID(clicker) {
 					input.PauseAllTask()
@@ -569,6 +707,13 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 					}
 				case i18nLoc.LocText("nowOver"):
 					res := input.ToolApp.Aria2.FormatTellStoppedFiltered(allowGids)
+					if extra := formatTelegramHistory(senderID); extra != "" {
+						if res != "" {
+							res += "\n\n" + extra
+						} else {
+							res = extra
+						}
+					}
 					if res != "" {
 						msg.Text = res
 					} else {
@@ -618,13 +763,7 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 					}
 				case i18nLoc.LocText("removeTask"):
 
-					InlineKeyboards, text := createFilesInlineKeyBoardRow(filesInlineKeyboards{
-						GidAndName: input.ToolApp.Aria2.FormatGidAndNameFiltered(0, allowGids),
-						Data:       "3",
-					}, filesInlineKeyboards{
-						GidAndName: input.ToolApp.Aria2.FormatGidAndNameFiltered(1, allowGids),
-						Data:       "3",
-					})
+					InlineKeyboards, text := buildRemovePicker(senderID, allowGids)
 					if len(InlineKeyboards) != 0 {
 						msg.Text = i18nLoc.LocText("removeWhichOne") + "\n" + text
 						msg.ReplyMarkup = tgBotApi.NewInlineKeyboardMarkup(InlineKeyboards...)
@@ -896,7 +1035,7 @@ func handleTelegramFile(bot *tgBotApi.BotAPI, senderID, chatID int64, senderUser
 			Status: "downloading",
 		})
 		notifyUserAdded(senderID, senderUsername, out)
-		go startTelegramLocalDownload(bot, taskChats(senderID, chatID), gid, out, fileID, senderID, chatID)
+		go startTelegramLocalDownload(bot, taskChats(senderID, chatID), gid, out, fileID, senderID, chatID, fileSize)
 		return ""
 	}
 	url, err := telegramDirectURL(bot, fileID)
