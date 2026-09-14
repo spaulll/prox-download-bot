@@ -381,7 +381,8 @@ func TestTempWatchIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	config.InitConfig(dir + "/c.json")
-	if err := os.MkdirAll(dir+"/temp", 0o755); err != nil {
+	// the server nests temp/ under a per-bot subdir, not the root
+	if err := os.MkdirAll(dir+"/botA/temp", 0o755); err != nil {
 		t.Fatal(err)
 	}
 	start := time.Now()
@@ -391,7 +392,7 @@ func TestTempWatchIntegration(t *testing.T) {
 	}
 	writeTemp := func(name string, size int) {
 		t.Helper()
-		f, err := os.Create(dir + "/temp/" + name)
+		f, err := os.Create(dir + "/botA/temp/" + name)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -174,27 +174,46 @@ type tempFileStat struct {
 	mtime time.Time
 }
 
-// scanTempDir snapshots <api-dir>/temp (nil when temp watching is off).
+// scanTempDir snapshots every */temp/ file anywhere under the API data dir
+// (the server creates one temp/ per bot subdirectory; nesting varies by
+// version so scan recursively instead of assuming a fixed location).
 func scanTempDir() map[string]tempFileStat {
-	dir := config.GetTelegramApiDir()
-	if dir == "" {
+	root := config.GetTelegramApiDir()
+	if root == "" {
 		return nil
 	}
-	entries, err := os.ReadDir(filepath.Join(dir, "temp"))
-	if err != nil {
-		return nil
-	}
-	out := make(map[string]tempFileStat, len(entries))
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		info, err := e.Info()
+	out := make(map[string]tempFileStat, 0)
+	var scan func(dir string)
+	scan = func(dir string) {
+		entries, err := os.ReadDir(dir)
 		if err != nil {
-			continue
+			return
 		}
-		out[e.Name()] = tempFileStat{size: info.Size(), mtime: info.ModTime()}
+		for _, e := range entries {
+			p := filepath.Join(dir, e.Name())
+			if e.IsDir() {
+				if e.Name() == "temp" {
+					tfEntries, err := os.ReadDir(p)
+					if err != nil {
+						continue
+					}
+					for _, tf := range tfEntries {
+						if tf.IsDir() {
+							continue
+						}
+						info, err := tf.Info()
+						if err != nil {
+							continue
+						}
+						out[tf.Name()] = tempFileStat{size: info.Size(), mtime: info.ModTime()}
+					}
+				} else {
+					scan(p)
+				}
+			}
+		}
 	}
+	scan(root)
 	return out
 }
 
