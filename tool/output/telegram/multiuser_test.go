@@ -1,8 +1,10 @@
 package telegram
 
 import (
+	"strings"
 	"testing"
 
+	i18nLoc "DownloadBot/i18n"
 	"DownloadBot/internal/users"
 )
 
@@ -77,5 +79,51 @@ func TestMultiUserRouting(t *testing.T) {
 	chats = chatsForGidFast("g5")
 	if len(chats) != 1 || chats[0] != 1 {
 		t.Fatalf("admin own chats = %v, want [1]", chats)
+	}
+}
+
+func TestApprovedUsersList(t *testing.T) {
+	i18nLoc.LocLan("en")
+	userStore = users.Open(t.TempDir() + "/users.json")
+	userStore.SetRole(1, users.RoleAdmin)
+	// give users usernames via start records, then approve them
+	userStore.UpsertStarted(100, "alice", "Alice A")
+	userStore.SetRole(100, users.RoleApproved)
+	userStore.UpsertStarted(101, "bob", "Bob B")
+	userStore.SetRole(101, users.RoleApproved)
+	userStore.SetRole(102, users.RoleDenied)
+
+	if got := len(approvedUsers()); got != 2 {
+		t.Fatalf("approvedUsers() = %d, want 2", got)
+	}
+	text, markup := buildApprovedUsersList()
+	if markup == nil {
+		t.Fatal("expected non-nil markup with approved users")
+	}
+	if !strings.Contains(text, "@alice") || !strings.Contains(text, "@bob") {
+		t.Fatalf("list text missing users:\n%s", text)
+	}
+	if len(markup.InlineKeyboard) != 2 {
+		t.Fatalf("markup rows = %d, want 2", len(markup.InlineKeyboard))
+	}
+
+	// simulate the remove callback: revoke + list refreshes
+	userStore.SetRole(100, users.RoleDenied)
+	if got := len(approvedUsers()); got != 1 {
+		t.Fatalf("approvedUsers() after remove = %d, want 1", got)
+	}
+	text, _ = buildApprovedUsersList()
+	if strings.Contains(text, "@alice") {
+		t.Fatalf("removed user still listed:\n%s", text)
+	}
+
+	// empty list: no markup, friendly message
+	userStore.SetRole(101, users.RoleDenied)
+	text, markup = buildApprovedUsersList()
+	if markup != nil {
+		t.Fatal("expected nil markup with no approved users")
+	}
+	if !strings.Contains(text, i18nLoc.LocText("noApprovedUsers")) {
+		t.Fatalf("empty list text wrong:\n%s", text)
 	}
 }

@@ -161,6 +161,38 @@ func accessUserLabel(id int64) string {
 	return fmt.Sprintf("%d", id)
 }
 
+// approvedUsers returns all approved (non-admin) users, oldest first.
+func approvedUsers() []users.User {
+	out := make([]users.User, 0)
+	for _, u := range userStore.All() {
+		if u.Role == users.RoleApproved {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
+// buildApprovedUsersList renders the admin user-management list with one
+// Remove button per user. Returns nil markup when the list is empty.
+func buildApprovedUsersList() (string, *tgBotApi.InlineKeyboardMarkup) {
+	list := approvedUsers()
+	if len(list) == 0 {
+		return i18nLoc.LocText("approvedUsersTitle") + "\n\n" + i18nLoc.LocText("noApprovedUsers"), nil
+	}
+	lines := i18nLoc.LocText("approvedUsersTitle") + "\n"
+	rows := make([][]tgBotApi.InlineKeyboardButton, 0, len(list))
+	for _, u := range list {
+		lines += "\n• " + accessUserLabel(u.ID) + fmt.Sprintf("  `%d`", u.ID)
+		rows = append(rows, tgBotApi.NewInlineKeyboardRow(
+			tgBotApi.NewInlineKeyboardButtonData(
+				i18nLoc.LocText("removeUserButton")+" "+accessUserLabel(u.ID),
+				fmt.Sprintf("removeuser~%d:31", u.ID)),
+		))
+	}
+	markup := tgBotApi.NewInlineKeyboardMarkup(rows...)
+	return lines, &markup
+}
+
 func createKeyBoardRow(texts ...string) [][]tgBotApi.KeyboardButton {
 	Keyboards := make([][]tgBotApi.KeyboardButton, 0)
 	for _, text := range texts {
@@ -218,6 +250,14 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 	))
 
 	var numericKeyboard = tgBotApi.NewReplyKeyboard(Keyboards...)
+
+	// adminKeyboard mirrors the user panel plus the Users management button.
+	adminKeys := append([][]tgBotApi.KeyboardButton{}, Keyboards...)
+	adminKeys = append(adminKeys, tgBotApi.NewKeyboardButtonRow(
+		tgBotApi.NewKeyboardButton(i18nLoc.LocText("usersList")),
+	))
+
+	var adminKeyboard = tgBotApi.NewReplyKeyboard(adminKeys...)
 
 	bot, err := tgBotApi.NewBotAPI(BotKey)
 	dropErr(err)
@@ -352,6 +392,28 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 						}
 					}
 				}
+			case "31":
+				// remove an approved user (admin only): revoke access and
+				// refresh the list in place
+				if isAdminID(update.CallbackQuery.From.ID) {
+					if parts := strings.Split(task[0], "~"); len(parts) == 2 {
+						id := typeTrans.Str2Int64(parts[1])
+						userStore.SetRole(id, users.RoleDenied)
+						bot.Send(tgBotApi.NewMessage(id, i18nLoc.LocText("accessRevoked")))
+						bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, i18nLoc.LocText("userRemoved")))
+						if update.CallbackQuery.Message != nil {
+							text, markup := buildApprovedUsersList()
+							edit := tgBotApi.NewEditMessageText(update.CallbackQuery.Message.Chat.ID,
+								update.CallbackQuery.Message.MessageID, text)
+							if markup != nil {
+								edit.ReplyMarkup = markup
+							} else {
+								edit.ReplyMarkup = &tgBotApi.InlineKeyboardMarkup{}
+							}
+							bot.Request(edit)
+						}
+					}
+				}
 			}
 
 			//fmt.Print(update)
@@ -482,6 +544,15 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 					} else {
 						msg.Text = i18nLoc.LocText("noOverTask")
 					}
+				case i18nLoc.LocText("usersList"):
+					// admin-only user management; silently ignore for others
+					if isAdminID(senderID) {
+						text, markup := buildApprovedUsersList()
+						msg.Text = text
+						if markup != nil {
+							msg.ReplyMarkup = *markup
+						}
+					}
 				default:
 					text := update.Message.Text
 					switch {
@@ -564,7 +635,11 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 						msg.Text += "\n" + i18nLoc.LocText("inLocal")
 					}
 					//msg.Text += "\n" + locText("nowTMMode") + locText("tmMode"+aria2Set.TMMode)
-					msg.ReplyMarkup = numericKeyboard
+					if isAdminID(senderID) {
+						msg.ReplyMarkup = adminKeyboard
+					} else {
+						msg.ReplyMarkup = numericKeyboard
+					}
 				case "help":
 					msg.Text = i18nLoc.LocText("commandHelpRes")
 				case "myid":
