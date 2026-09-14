@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	i18nLoc "DownloadBot/i18n"
 	"DownloadBot/internal/config"
@@ -185,7 +186,7 @@ func TestTelegramFileHelpers(t *testing.T) {
 		"Some Show S01E01.mkv": "Some Show S01E01.mkv",
 		"/etc/passwd":          "passwd",
 		`..\windows\evil.exe`:  "evil.exe",
-		"  spaced.mp4  ":        "spaced.mp4",
+		"  spaced.mp4  ":       "spaced.mp4",
 		"":                     "",
 		".":                    "",
 	} {
@@ -222,5 +223,26 @@ func TestTelegramFileURL(t *testing.T) {
 	// by testing the format branches directly)
 	if got := telegramFileURL("docs/f.bin"); !strings.Contains(got, "TESTTOKEN") || !strings.Contains(got, "docs/f.bin") {
 		t.Fatalf("file url = %q, want token + path", got)
+	}
+}
+
+func TestLocalFetchHelpers(t *testing.T) {
+	if got := percentOf(50, 100); got != 50 {
+		t.Fatalf("percentOf(50,100) = %v, want 50", got)
+	}
+	if got := percentOf(0, 0); got != 0 {
+		t.Fatalf("percentOf(0,0) = %v, want 0", got)
+	}
+	if got := percentOf(200, 100); got != 100 {
+		t.Fatalf("percentOf(200,100) = %v, want 100", got)
+	}
+	if got := localFetchTimeout(0); got != 30*time.Minute {
+		t.Fatalf("unknown-size timeout = %v, want 30m", got)
+	}
+	if got := localFetchTimeout(1024); got != 10*time.Minute {
+		t.Fatalf("small-file timeout = %v, want 10m floor", got)
+	}
+	if got := localFetchTimeout(10 * 1024 * 1024 * 1024); got != 3*time.Hour {
+		t.Fatalf("huge-file timeout = %v, want 3h cap", got)
 	}
 }

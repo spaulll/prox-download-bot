@@ -509,6 +509,11 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 			senderID := update.Message.From.ID
 			senderName := strings.TrimSpace(update.Message.From.FirstName + " " + update.Message.From.LastName)
 			senderUsername := update.Message.From.UserName
+			logger.Info("update msg %d from %d chat %d text=%q doc=%v video=%v audio=%v anim=%v voice=%v vnote=%v photo=%d",
+				update.Message.MessageID, senderID, update.Message.Chat.ID, update.Message.Text,
+				update.Message.Document != nil, update.Message.Video != nil, update.Message.Audio != nil,
+				update.Message.Animation != nil, update.Message.Voice != nil, update.Message.VideoNote != nil,
+				len(update.Message.Photo))
 
 			// /start approval flow: register user, notify admin on new requests
 			if update.Message.Command() == "start" {
@@ -868,6 +873,7 @@ func handleTelegramFile(bot *tgBotApi.BotAPI, senderID, chatID int64, senderUser
 		fileName = fmt.Sprintf("file_%d", time.Now().UnixNano())
 	}
 	out := safeOutName(fileName)
+	logger.Info("telegram file from %d: %q (%d bytes)", senderID, out, fileSize)
 	if out == "" {
 		return i18nLoc.LocText("unknownLink")
 	}
@@ -876,6 +882,23 @@ func handleTelegramFile(bot *tgBotApi.BotAPI, senderID, chatID int64, senderUser
 			typeTrans.Byte2Readable(float64(fileSize)),
 			typeTrans.Byte2Readable(float64(cap)))
 	}
+	// local Bot API server: no /file/ HTTP route exists, the server drops
+	// the file on local disk instead - fetch it from there.
+	if config.GetTelegramApiBase() != "" {
+		gid := fmt.Sprintf("tg%d", time.Now().UnixNano())
+		taskStore.Add(users.Task{
+			GID:    gid,
+			UserID: senderID,
+			ChatID: chatID,
+			Link:   "tg:file:" + out,
+			Name:   out,
+			Engine: "telegram",
+			Status: "downloading",
+		})
+		notifyUserAdded(senderID, senderUsername, out)
+		go startTelegramLocalDownload(bot, taskChats(senderID, chatID), gid, out, fileID)
+		return ""
+	}
 	url, err := telegramDirectURL(bot, fileID)
 	if err != nil || url == "" {
 		logger.Error("telegram file url failed for %s: %v", out, err)
@@ -883,8 +906,10 @@ func handleTelegramFile(bot *tgBotApi.BotAPI, senderID, chatID int64, senderUser
 	}
 	gid, ok := input.ToolApp.Aria2.DownloadAs(url, out)
 	if !ok {
+		logger.Error("aria2 DownloadAs failed for %s", out)
 		return i18nLoc.LocText("unknownLink")
 	}
+	logger.Info("telegram file %q started as gid %s", out, gid)
 	taskStore.Add(users.Task{
 		GID:    gid,
 		UserID: senderID,

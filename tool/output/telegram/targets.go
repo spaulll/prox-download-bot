@@ -182,26 +182,28 @@ func markTaskCompleted(gid string) {
 	taskStore.SetStatus(gid, "completed")
 }
 
-// pauseOwnTasks pauses only the tasks owned by userID (non-admin bulk action).
+// pauseOwnTasks pauses only the aria2 tasks owned by userID (non-admin bulk
+// action). Other engines (ytdlp, telegram-local) have no pausable handle.
 func pauseOwnTasks(userID int64) {
 	if taskStore == nil {
 		return
 	}
 	for _, t := range taskStore.ByUser(userID) {
-		if t.Engine == "ytdlp" {
+		if t.Engine != "aria2" {
 			continue
 		}
 		input.ToolApp.Aria2.Pause(t.GID)
 	}
 }
 
-// resumeOwnTasks resumes only the tasks owned by userID (non-admin bulk action).
+// resumeOwnTasks resumes only the aria2 tasks owned by userID (non-admin
+// bulk action).
 func resumeOwnTasks(userID int64) {
 	if taskStore == nil {
 		return
 	}
 	for _, t := range taskStore.ByUser(userID) {
-		if t.Engine == "ytdlp" {
+		if t.Engine != "aria2" {
 			continue
 		}
 		input.ToolApp.Aria2.Unpause(t.GID)
