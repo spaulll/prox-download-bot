@@ -8,7 +8,10 @@
   "output": {
     "telegram": {
       "bot-key": "",
-      "user-id": ""
+      "user-id": "",
+      "api-id": 0,
+      "api-hash": "",
+      "api-base": ""
     }
   },
   "max-index": 10,

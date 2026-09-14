@@ -13,7 +13,7 @@
   "removeUserButton": "❌ Remove",
   "userRemoved": "User removed",
   "accessRevoked": "⛔ Your access to the bot was revoked by the admin.",
-  "fileTooLarge": "⚠️ File too large (%s). Telegram bot downloads are limited to 20 MB.\nSend a direct link instead.",
+  "fileTooLarge": "⚠️ File too large (%s). Telegram bot downloads are limited to %s.\nSend a direct link instead.",
   "tgCommandStartDes": "Get the online Aria2 server and open the panel",
   "tgCommandMyIDDes": "Get user ID",
   "taskNowStop": "Task stopped",

@@ -12,6 +12,15 @@ type Config struct {
 		Telegram struct {
 			BotKey string `json:"bot-key"`
 			UserID string `json:"user-id"`
+			// ApiID and ApiHash are the my.telegram.org app credentials for a
+			// self-hosted Bot API server. Empty = use Telegram cloud.
+			ApiID int `json:"api-id,omitempty"`
+			// ApiHash is the my.telegram.org app hash (see ApiID).
+			ApiHash string `json:"api-hash,omitempty"`
+			// ApiBase is the base URL of a self-hosted Bot API server, e.g.
+			// "http://127.0.0.1:8081". Empty = use Telegram cloud (20 MB
+			// bot download cap); set = local server (up to 2 GB).
+			ApiBase string `json:"api-base,omitempty"`
 		} `json:"telegram"`
 	} `json:"output"`
 	MaxIndex int    `json:"max-index"`

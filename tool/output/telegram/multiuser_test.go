@@ -1,10 +1,12 @@
 package telegram
 
 import (
+	"os"
 	"strings"
 	"testing"
 
 	i18nLoc "DownloadBot/i18n"
+	"DownloadBot/internal/config"
 	"DownloadBot/internal/users"
 	logger "DownloadBot/tool/zap"
 )
@@ -190,5 +192,35 @@ func TestTelegramFileHelpers(t *testing.T) {
 		if got := safeOutName(in); got != want {
 			t.Errorf("safeOutName(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestLocalBotAPIConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfg := `{"input":{"aria2":{"aria2-server":"ws://127.0.0.1:6800/jsonrpc","aria2-key":"x"}},` +
+		`"output":{"telegram":{"bot-key":"k","user-id":"1","api-id":123,"api-hash":"h","api-base":"http://127.0.0.1:8081/"}},` +
+		`"max-index":10,"language":"en","downloadFolder":"/tmp","organize":{"enabled":false},"log":{"level":"info"}}`
+	if err := os.WriteFile(dir+"/c.json", []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config.InitConfig(dir + "/c.json")
+	if got := config.GetTelegramApiBase(); got != "http://127.0.0.1:8081" {
+		t.Fatalf("api-base = %q, want trimmed host without trailing slash", got)
+	}
+	if config.GetTelegramApiID() != 123 || config.GetTelegramApiHash() != "h" {
+		t.Fatal("api-id/api-hash not loaded")
+	}
+	if got := telegramDownloadCap(); got != 2000*1024*1024 {
+		t.Fatalf("local cap = %d, want 2GB", got)
+	}
+}
+
+func TestTelegramFileURL(t *testing.T) {
+	botToken = "TESTTOKEN"
+	t.Cleanup(func() { botToken = "" })
+	// cloud mode (config from TestLocalBotAPIConfig may persist; force cloud
+	// by testing the format branches directly)
+	if got := telegramFileURL("docs/f.bin"); !strings.Contains(got, "TESTTOKEN") || !strings.Contains(got, "docs/f.bin") {
+		t.Fatalf("file url = %q, want token + path", got)
 	}
 }

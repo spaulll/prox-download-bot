@@ -96,6 +96,23 @@ func GetTelegramUserID() string {
 	return info.Output.Telegram.UserID
 }
 
+// GetTelegramApiID returns the my.telegram.org app id for a self-hosted Bot
+// API server (0 = use Telegram cloud).
+func GetTelegramApiID() int {
+	return info.Output.Telegram.ApiID
+}
+
+// GetTelegramApiHash returns the my.telegram.org app hash ("" = cloud).
+func GetTelegramApiHash() string {
+	return info.Output.Telegram.ApiHash
+}
+
+// GetTelegramApiBase returns the self-hosted Bot API server base URL
+// ("" = use Telegram cloud).
+func GetTelegramApiBase() string {
+	return strings.TrimSuffix(strings.TrimSpace(info.Output.Telegram.ApiBase), "/")
+}
+
 // GetMaxIndex is the maximum number of shows
 func GetMaxIndex() int {
 	return info.MaxIndex

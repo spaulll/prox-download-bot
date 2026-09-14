@@ -81,6 +81,10 @@ var tBot *tgBotApi.BotAPI
 // activeBot is the running bot instance used by the organize pipeline
 var activeBot *tgBotApi.BotAPI
 
+// botToken is the bot token for building file download URLs (needed because
+// the library hardcodes the cloud file endpoint).
+var botToken string
+
 // userStore persists approved/pending/denied bot users
 var userStore *users.Store
 
@@ -127,6 +131,37 @@ func isAdminID(id int64) bool {
 		}
 	}
 	return false
+}
+
+// useLocalBotAPI points Bot API method calls at a self-hosted server when
+// api-base is configured (enables up to 2 GB file downloads instead of the
+// 20 MB cloud cap). File download URLs are built by telegramFileURL because
+// the library hardcodes the cloud file endpoint. Empty api-base = cloud.
+func useLocalBotAPI(bot *tgBotApi.BotAPI) {
+	base := config.GetTelegramApiBase()
+	if base == "" {
+		return
+	}
+	bot.SetAPIEndpoint(base + "/bot%s/%s")
+	logger.Info("using local Bot API server at %s", base)
+}
+
+// telegramFileURL builds the content-download URL for a getFile path against
+// the configured Bot API server (local or cloud).
+func telegramFileURL(filePath string) string {
+	if base := config.GetTelegramApiBase(); base != "" {
+		return base + "/file/bot" + botToken + "/" + filePath
+	}
+	return fmt.Sprintf(tgBotApi.FileEndpoint, botToken, filePath)
+}
+
+// telegramDownloadCap returns the max downloadable Telegram file size: 2 GB
+// via a local Bot API server, 20 MB via Telegram cloud.
+func telegramDownloadCap() int64 {
+	if config.GetTelegramApiBase() != "" {
+		return 2000 * 1024 * 1024
+	}
+	return maxTelegramFileBytes
 }
 
 // notifyAdmin sends a message to every configured admin chat.
@@ -307,6 +342,8 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 	dropErr(err)
 	tBot = bot
 	activeBot = bot
+	botToken = BotKey
+	useLocalBotAPI(bot)
 	initUsers()
 	bot.Debug = false
 	// sweep crashed-run staging dirs before aria2 can deliver new events
@@ -635,7 +672,7 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 					if update.Message.Document != nil {
 						doc := update.Message.Document
 						if isTorrentUpload(doc.FileName, doc.MimeType) {
-							bt, _ := bot.GetFileDirectURL(doc.FileID)
+							bt, _ := telegramDirectURL(bot, doc.FileID)
 							resp, err := http.Get(bt)
 							dropErr(err)
 							defer resp.Body.Close()
@@ -810,6 +847,16 @@ func safeOutName(name string) string {
 	return name
 }
 
+// telegramDirectURL resolves a Telegram file_id to a content-download URL
+// via the configured Bot API server (local or cloud).
+func telegramDirectURL(bot *tgBotApi.BotAPI, fileID string) (string, error) {
+	f, err := bot.GetFile(tgBotApi.FileConfig{FileID: fileID})
+	if err != nil || f.FilePath == "" {
+		return "", err
+	}
+	return telegramFileURL(f.FilePath), nil
+}
+
 // handleTelegramFile downloads a Telegram-hosted file through aria2 (saved
 // under its original name) so it flows through the normal progress and
 // organize pipeline exactly like a link. The Bot API file URL contains the
@@ -824,10 +871,12 @@ func handleTelegramFile(bot *tgBotApi.BotAPI, senderID, chatID int64, senderUser
 	if out == "" {
 		return i18nLoc.LocText("unknownLink")
 	}
-	if fileSize > maxTelegramFileBytes {
-		return fmt.Sprintf(i18nLoc.LocText("fileTooLarge"), typeTrans.Byte2Readable(float64(fileSize)))
+	if cap := telegramDownloadCap(); int64(fileSize) > cap {
+		return fmt.Sprintf(i18nLoc.LocText("fileTooLarge"),
+			typeTrans.Byte2Readable(float64(fileSize)),
+			typeTrans.Byte2Readable(float64(cap)))
 	}
-	url, err := bot.GetFileDirectURL(fileID)
+	url, err := telegramDirectURL(bot, fileID)
 	if err != nil || url == "" {
 		logger.Error("telegram file url failed for %s: %v", out, err)
 		return i18nLoc.LocText("unknownLink")
