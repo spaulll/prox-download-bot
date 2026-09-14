@@ -326,9 +326,9 @@ func formatTelegramHistory(userID int64) string {
 	return strings.Join(parts, "\n\n")
 }
 
-// telegramRemoveEntries lists non-aria2 tasks removable via the Remove
-// picker: in-progress telegram fetches (cancellable) plus finished
-// telegram/ytdlp entries (forgotten). ytdlp-active is excluded (uncancellable).
+// telegramRemoveEntries lists in-progress Telegram fetches, which are the
+// only removable non-aria2 tasks. Finished downloads live in the History
+// view and are intentionally not listed here.
 func telegramRemoveEntries(userID int64) []map[string]string {
 	out := make([]map[string]string, 0)
 	localActiveMu.Lock()
@@ -351,13 +351,6 @@ func telegramRemoveEntries(userID int64) []map[string]string {
 			name = t.Link
 		}
 		out = append(out, map[string]string{"GID": gid, "Name": name})
-	}
-	for _, t := range nonAria2History(userID) {
-		name := t.Name
-		if name == "" {
-			name = t.Link
-		}
-		out = append(out, map[string]string{"GID": t.GID, "Name": name})
 	}
 	return out
 }
@@ -383,13 +376,25 @@ func refreshRemovePicker(bot *tgBotApi.BotAPI, update tgBotApi.Update, clicker i
 }
 
 // buildRemovePicker builds the combined remove picker (aria2 active/waiting
-// plus removable non-aria2 entries) with continuous numbering.
+// plus in-progress Telegram fetches) with continuous numbering. Rows are
+// deduplicated by GID (a multi-file torrent lists one row per file but is a
+// single removable task).
 func buildRemovePicker(userID int64, allowGids map[string]bool) ([][]tgBotApi.InlineKeyboardButton, string) {
-	entries := append(
+	raw := append(
 		input.ToolApp.Aria2.FormatGidAndNameFiltered(0, allowGids),
 		input.ToolApp.Aria2.FormatGidAndNameFiltered(1, allowGids)...,
 	)
-	entries = append(entries, telegramRemoveEntries(userID)...)
+	raw = append(raw, telegramRemoveEntries(userID)...)
+	seen := map[string]bool{}
+	entries := make([]map[string]string, 0, len(raw))
+	for _, e := range raw {
+		gid := e["GID"]
+		if gid == "" || seen[gid] {
+			continue
+		}
+		seen[gid] = true
+		entries = append(entries, e)
+	}
 	return createFilesInlineKeyBoardRow(filesInlineKeyboards{
 		GidAndName: entries,
 		Data:       "3",
@@ -712,7 +717,7 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 				switch update.Message.Text {
 				case i18nLoc.LocText("nowDownload"):
 					requestChat := update.Message.Chat.ID
-					ticker := time.NewTicker(time.Second)
+					ticker := time.NewTicker(5 * time.Second)
 					rand.Seed(time.Now().UnixNano())
 					a := rand.Intn(100000) + 1
 					setActiveRefreshControl(requestChat, a)
