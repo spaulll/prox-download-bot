@@ -31,9 +31,31 @@ var deleteMes tgBotApi.DeleteMessageConfig = tgBotApi.DeleteMessageConfig{
 	MessageID:       0,
 }
 
+// dropErr panics when err is non-nil (used for startup/fatal failures).
 func dropErr(err error) {
 	if err != nil {
 		logger.Panic("%w", err)
+	}
+}
+
+// sendSafe sends c without panicking: Telegram API errors (especially
+// rate-limit 429s) must never take the whole bot down. On 429 it sleeps the
+// server's retry-after hint (capped) so the flood decays.
+func sendSafe(bot *tgBotApi.BotAPI, c tgBotApi.Chattable) {
+	if bot == nil || c == nil {
+		return
+	}
+	if _, err := bot.Send(c); err != nil {
+		if te, ok := err.(*tgBotApi.Error); ok && te.RetryAfter > 0 {
+			wait := time.Duration(te.RetryAfter) * time.Second
+			if wait > 30*time.Second {
+				wait = 30 * time.Second
+			}
+			logger.Warn("telegram 429, backing off %v", wait)
+			time.Sleep(wait)
+		} else {
+			logger.Error("telegram send failed: %v", err)
+		}
 	}
 }
 
@@ -660,22 +682,19 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 					// admins fall through to normal handling below
 				} else if role == users.RoleApproved {
 					msg.Text = "👋 Welcome back!\nSend me a link to download."
-					_, err := bot.Send(msg)
-					dropErr(err)
+					sendSafe(bot, msg)
 					continue
 				} else if role == users.RolePending {
 					notifyAdminRequest(bot, senderID, senderUsername, senderName, false)
 					msg.Text = "👋 Welcome! Your access request has been sent to the admin.\nYou will be notified when approved."
-					_, err := bot.Send(msg)
-					dropErr(err)
+					sendSafe(bot, msg)
 					continue
 				} else if role == users.RoleDenied {
 					// denied users may re-request: flip back to pending and
 					// notify the admin again (fresh message, no scrolling)
 					notifyAdminRequest(bot, senderID, senderUsername, senderName, true)
 					msg.Text = "👋 Your previous request was denied.\nA new access request has been sent to the admin."
-					_, err := bot.Send(msg)
-					dropErr(err)
+					sendSafe(bot, msg)
 					continue
 				}
 			}
@@ -693,7 +712,7 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 				switch update.Message.Text {
 				case i18nLoc.LocText("nowDownload"):
 					requestChat := update.Message.Chat.ID
-					ticker := time.NewTicker(500 * time.Millisecond)
+					ticker := time.NewTicker(time.Second)
 					rand.Seed(time.Now().UnixNano())
 					a := rand.Intn(100000) + 1
 					setActiveRefreshControl(requestChat, a)
@@ -953,8 +972,7 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 
 			if msg.Text != "" {
 				//bot.Send(tgBotApi.NewEditMessageText(update.Message.Chat.ID, 591, "123456"))
-				_, err := bot.Send(msg)
-				dropErr(err)
+				sendSafe(bot, msg)
 			}
 		}
 	}

@@ -517,7 +517,7 @@ func startActiveRefresh(chatID int64, chatMsgID int) {
 	if activeBot == nil {
 		return
 	}
-	ticker := time.NewTicker(500 * time.Millisecond)
+	ticker := time.NewTicker(time.Second)
 	rand.Seed(time.Now().UnixNano())
 	flag := rand.Intn(100000) + 1
 	setActiveRefreshControl(chatID, flag)

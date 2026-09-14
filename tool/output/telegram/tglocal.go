@@ -394,81 +394,38 @@ func linkOrCopy(src, dst string) error {
 }
 
 // startTelegramLocalDownload fetches a Telegram file through the local Bot
-// API server with live progress, then runs the normal organize pipeline.
-// Runs asynchronously (call in a goroutine). fileSize is the size reported
-// by the Telegram message itself (getFile may not know it yet).
+// API server, then runs the normal organize pipeline. Runs asynchronously
+// (call in a goroutine). fileSize is the size reported by the message.
+//
+// Progress is shown via the same Downloading list as aria2 tasks (one live
+// message, auto-opened in every relevant chat), so there is no separate
+// progress message to keep in sync. Registry fields (downloaded/rate) feed
+// that list; no timer loop here.
 func startTelegramLocalDownload(bot *tgBotApi.BotAPI, chats []int64, gid, displayName, fileID string, userID, chatID int64, fileSize int) {
 	chats = dedupChats(chats)
 	ctx, cancel := context.WithCancel(context.Background())
-	live := NewDualProgressMsg(bot, chats, "⬇️ Downloading\n"+displayName)
-	registerLocalFetch(gid, displayName, userID, chatID, int64(fileSize), cancel, live)
-	defer func() {
-		live.Delete()
-		unregisterLocalFetch(gid)
-	}()
-	start := time.Now()
-	tick := 0
-	var lastText string
-	update := func() {
-		localActiveMu.Lock()
-		f, ok := localActive[gid]
-		var total, downloaded int64
-		var rate float64
-		if ok {
-			total, downloaded, rate = f.total, f.downloaded, f.rate
-		}
-		localActiveMu.Unlock()
-		size := "…"
-		if total > 0 {
-			size = typeTrans.Byte2Readable(float64(total))
-		}
-		var text string
-		if ok && downloaded >= 0 && total > 0 {
-			// attributed server bytes: real bar, downloaded, speed, ETA
-			pct := float64(downloaded) * 100.0 / float64(total)
-			if pct > 100 {
-				pct = 100
-			}
-			text = "⬇️ Downloading\n" +
-				taskProgressBar(pct) + "\n" +
-				fmt.Sprintf("Downloaded: %s of %s",
-					typeTrans.Byte2Readable(float64(downloaded)), size)
-			if rate > 0 {
-				text += "\nSpeed: " + typeTrans.Byte2Readable(rate) + "/s"
-				if left := total - downloaded; left > 0 {
-					text += "\nETA: " + formatDuration(time.Duration(float64(left)/rate)*time.Second)
-				}
-			}
-			text += "\n" + displayName
-		} else {
-			frame := spinnerFrames[tick%len(spinnerFrames)]
-			tick++
-			text = "⬇️ Downloading\n\n" +
-				"📥 Fetching from Telegram " + frame + "\n" +
-				"📦 Size: " + size + "\n" +
-				"⏱ Elapsed: " + formatDuration(time.Since(start)) + "\n\n" +
-				displayName
-		}
-		if text != lastText {
-			live.Update(text)
-			lastText = text
-		}
+	defer cancel()
+	registerLocalFetch(gid, displayName, userID, chatID, int64(fileSize), cancel, nil)
+	defer unregisterLocalFetch(gid)
+	// open the Downloading list in every relevant chat (replaces previous
+	// views per chat); delete-button flag collisions are handled by
+	// startActiveRefresh. Keeps exactly one live progress message.
+	for _, chat := range dedupChats(chats) {
+		startActiveRefresh(chat, 0)
+		time.Sleep(150 * time.Millisecond)
 	}
-	src, total, err := fetchTelegramLocalFile(ctx, bot, gid, fileID, int64(fileSize), update)
+	src, total, err := fetchTelegramLocalFile(ctx, bot, gid, fileID, int64(fileSize), func() {})
 	if err != nil {
 		logger.Error("telegram local fetch failed for %s: %v", displayName, err)
 		if err.Error() == "download cancelled" {
-			// removal already handled by the canceller; just go quiet
 			return
 		}
 		taskStore.SetStatus(gid, "failed")
-		if live != nil {
-			live.Update("⚠️ Download failed\n" + err.Error() + "\n" + displayName)
+		for _, chat := range chats {
+			sendPlain(bot, chat, "⚠️ Download failed\n"+err.Error()+"\n"+displayName)
 		}
 		return
 	}
-	// cancelled while staging/organizing was queued: discard instead of
-	// delivering a surprise result
 	if _, ok := taskStore.Get(gid); !ok {
 		_ = os.Remove(src)
 		return
@@ -478,20 +435,20 @@ func startTelegramLocalDownload(bot *tgBotApi.BotAPI, chats []int64, gid, displa
 	if err := linkOrCopy(src, dest); err != nil {
 		logger.Error("telegram local stage failed for %s: %v", displayName, err)
 		taskStore.SetStatus(gid, "failed")
-		if live != nil {
-			live.Update("⚠️ Download failed\n" + err.Error() + "\n" + displayName)
+		for _, chat := range chats {
+			sendPlain(bot, chat, "⚠️ Download failed\n"+err.Error()+"\n"+displayName)
 		}
 		return
 	}
-	// the staged copy now owns the data (hardlink shares the inode, plain
-	// copy duplicates it): drop the server-side cache copy so 2 GB files do
-	// not linger twice on disk. The server re-fetches on demand if needed.
 	if err := os.Remove(src); err != nil && !os.IsNotExist(err) {
 		logger.Error("telegram server copy cleanup failed for %s: %v", src, err)
 	} else {
 		logger.Info("telegram server copy cleaned: %s", src)
 	}
 	logger.Info("telegram local fetch completed: %s (%d bytes)", displayName, total)
-	live.Delete()
+	// drop the fetch row from the Downloading list before organizing takes
+	// over (the deferred unregister would otherwise keep it until organize
+	// finishes)
+	unregisterLocalFetch(gid)
 	runOrganizeDual(bot, chats, gid, dest, displayName, false)
 }
