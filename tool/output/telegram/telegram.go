@@ -114,31 +114,38 @@ func isAdminID(id int64) bool {
 	return false
 }
 
-// notifyAdmin sends a message to the first configured admin chat.
+// notifyAdmin sends a message to every configured admin chat.
 func notifyAdmin(text string) {
 	if len(adminIDs) == 0 || tBot == nil {
 		return
 	}
-	sendPlain(tBot, adminIDs[0], text)
+	for _, id := range dedupChats(adminIDs) {
+		sendPlain(tBot, id, text)
+	}
 }
 
 // notifyAdminRequest sends (or re-sends) an access request with Approve/Deny
-// buttons to the admin.
+// buttons to every admin.
 func notifyAdminRequest(bot *tgBotApi.BotAPI, senderID int64, username, fullName string, reRequest bool) {
+	if len(adminIDs) == 0 {
+		return
+	}
 	title := "👤 New user request"
 	if reRequest {
 		title = "🔁 Re-request from denied user"
 	}
-	reqMsg := tgBotApi.NewMessage(adminIDs[0], fmt.Sprintf(
-		"%s\n\nID: `%d`\nName: %s\nUsername: %s\n\nApprove this user?",
-		title, senderID, fullName, username))
-	reqMsg.ReplyMarkup = tgBotApi.NewInlineKeyboardMarkup(
-		tgBotApi.NewInlineKeyboardRow(
-			tgBotApi.NewInlineKeyboardButtonData("✅ Approve", fmt.Sprintf("approve~%d:20", senderID)),
-			tgBotApi.NewInlineKeyboardButtonData("⛔ Deny", fmt.Sprintf("deny~%d:21", senderID)),
-		),
-	)
-	bot.Send(reqMsg)
+	for _, admin := range dedupChats(adminIDs) {
+		reqMsg := tgBotApi.NewMessage(admin, fmt.Sprintf(
+			"%s\n\nID: `%d`\nName: %s\nUsername: %s\n\nApprove this user?",
+			title, senderID, fullName, username))
+		reqMsg.ReplyMarkup = tgBotApi.NewInlineKeyboardMarkup(
+			tgBotApi.NewInlineKeyboardRow(
+				tgBotApi.NewInlineKeyboardButtonData("✅ Approve", fmt.Sprintf("approve~%d:20", senderID)),
+				tgBotApi.NewInlineKeyboardButtonData("⛔ Deny", fmt.Sprintf("deny~%d:21", senderID)),
+			),
+		)
+		bot.Send(reqMsg)
+	}
 }
 
 // accessUserLabel renders a stored user for decision confirmations.
@@ -241,29 +248,58 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 	dropErr(err)
 	for update := range updates {
 		if update.CallbackQuery != nil {
+			clicker := update.CallbackQuery.From.ID
 			task := strings.Split(update.CallbackQuery.Data, ":")
 			//log.Println(task)
 			switch task[1] {
 			case "1":
+				if !canControlGid(clicker, task[0]) {
+					bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, "⛔ You can only control your own tasks"))
+					break
+				}
 				input.PauseTask(task[0])
 				bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, i18nLoc.LocText("taskNowStop")))
 			case "2":
+				if !canControlGid(clicker, task[0]) {
+					bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, "⛔ You can only control your own tasks"))
+					break
+				}
 				input.UnpauseTask(task[0])
 				bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, i18nLoc.LocText("taskNowResume")))
 			case "3":
+				if !canControlGid(clicker, task[0]) {
+					bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, "⛔ You can only control your own tasks"))
+					break
+				}
 				input.ForceRemoveTask(task[0])
 				bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, i18nLoc.LocText("taskNowRemove")))
 			case "4":
-				input.PauseAllTask()
+				if isAdminID(clicker) {
+					input.PauseAllTask()
+				} else {
+					pauseOwnTasks(clicker)
+				}
 				bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, i18nLoc.LocText("taskNowStopAll")))
 			case "5":
-				input.UnpauseAllTask()
+				if isAdminID(clicker) {
+					input.UnpauseAllTask()
+				} else {
+					resumeOwnTasks(clicker)
+				}
 				bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, i18nLoc.LocText("taskNowResumeAll")))
 			case "6":
+				if gid := strings.SplitN(task[0], "~", 2)[0]; !canControlGid(clicker, gid) {
+					bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, "⛔ You can only control your own tasks"))
+					break
+				}
 				TMSelectMessageChan <- task[0]
 				b := strings.Split(task[0], "~")
 				bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, i18nLoc.LocText("selected")+b[1]))
 			case "7":
+				if gid := strings.SplitN(task[0], "~", 2)[0]; !canControlGid(clicker, gid) {
+					bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, "⛔ You can only control your own tasks"))
+					break
+				}
 				TMSelectMessageChan <- task[0]
 				bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, i18nLoc.LocText("operationSuccess")))
 			case "20":
@@ -369,11 +405,12 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 
 				switch update.Message.Text {
 				case i18nLoc.LocText("nowDownload"):
+					requestChat := update.Message.Chat.ID
 					ticker := time.NewTicker(500 * time.Millisecond)
 					rand.Seed(time.Now().UnixNano())
-					a := rand.Intn(100000)
-					activeRefreshControl = a
-					go activeRefresh(update.Message.MessageID, bot, ticker, a)
+					a := rand.Intn(100000) + 1
+					setActiveRefreshControl(requestChat, a)
+					go activeRefresh(requestChat, update.Message.MessageID, bot, ticker, a)
 				case i18nLoc.LocText("nowWaiting"):
 					res := input.ToolApp.Aria2.FormatTellWaitingFiltered(allowGids)
 					if res != "" {
@@ -450,21 +487,24 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 					switch {
 					case ytdlp.IsKnownSite(text):
 						// yt-dlp compatible site -> dedicated handler
+						ytGID := "yt" + fmt.Sprint(time.Now().UnixNano())
 						taskStore.Add(users.Task{
-							GID:    "yt" + fmt.Sprint(time.Now().UnixNano()),
+							GID:    ytGID,
 							UserID: senderID,
+							ChatID: update.Message.Chat.ID,
 							Link:   text,
 							Engine: "ytdlp",
 							Status: "downloading",
 						})
 						notifyUserAdded(senderID, senderUsername, text)
-						go startYtdlpDownload(bot, update.Message.Chat.ID, text)
+						go startYtdlpDownload(bot, update.Message.Chat.ID, text, ytGID)
 					case isDownloadable(text):
 						gid, ok := input.ToolApp.Aria2.Download(text)
 						if ok {
 							taskStore.Add(users.Task{
 								GID:    gid,
 								UserID: senderID,
+								ChatID: update.Message.Chat.ID,
 								Link:   text,
 								Engine: "aria2",
 								Status: "downloading",
@@ -481,15 +521,27 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 						resp, err := http.Get(bt)
 						dropErr(err)
 						defer resp.Body.Close()
-						out, err := os.Create("temp.torrent")
+						tmpName := fmt.Sprintf("temp_%d_%d.torrent", senderID, time.Now().UnixNano())
+						out, err := os.Create(tmpName)
 						dropErr(err)
-						defer out.Close()
 						_, err = io.Copy(out, resp.Body)
+						out.Close()
 						dropErr(err)
-						if gid, ok := input.ToolApp.Aria2.Download("temp.torrent"); ok {
-							rememberUploadedTorrent(gid)
-							_ = gid
+						if gid, ok := input.ToolApp.Aria2.Download(tmpName); ok {
+							taskStore.Add(users.Task{
+								GID:    gid,
+								UserID: senderID,
+								ChatID: update.Message.Chat.ID,
+								Link:   update.Message.Document.FileName,
+								Engine: "aria2",
+								Status: "downloading",
+							})
+							rememberUploadedTorrent(gid, tmpName)
+							_ = os.Remove(tmpName)
+							notifyUserAdded(senderID, senderUsername, update.Message.Document.FileName)
 							msg.Text = ""
+						} else {
+							_ = os.Remove(tmpName)
 						}
 					}
 					/*if update.Message.Video != nil {
@@ -567,15 +619,9 @@ func notifyUserAdded(senderID int64, senderUsername, link string) {
 	notifyAdmin(fmt.Sprintf("👤 %s added a task\n🔗 %s", name, link))
 }
 
-// notifyUserTaskDone informs the task owner that their download finished.
+// notifyUserTaskDone records completion (legacy helper). Delivery itself is
+// handled by the dual-chat organize pipeline which already mirrors the
+// "Download completed" notice to owner + admins, so no extra send here.
 func notifyUserTaskDone(gid, name string) {
-	task, ok := taskStore.Get(gid)
-	if !ok || isAdminID(task.UserID) {
-		return
-	}
-	taskStore.SetStatus(gid, "completed")
-	if activeBot == nil {
-		return
-	}
-	sendPlain(activeBot, task.UserID, "✅ Download completed\n\n"+name)
+	markTaskCompleted(gid)
 }

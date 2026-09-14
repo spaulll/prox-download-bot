@@ -98,9 +98,11 @@ func maybeDropTorrentFile(gid string) {
 	logger.Info("Removed .torrent file %s (keepTorrent off)", path)
 }
 
-// rememberUploadedTorrent stores a copy of an uploaded temp.torrent in the
+// rememberUploadedTorrent stores a copy of an uploaded .torrent in the
 // torrents folder and links it to its content GID for the keep toggle.
-func rememberUploadedTorrent(gid string) {
+// An explicit source path may be passed (per-user temp files); it falls back
+// to the legacy "temp.torrent" when omitted.
+func rememberUploadedTorrent(gid string, srcPaths ...string) {
 	name := input.ToolApp.Aria2.TellName(gid)
 	if name == "" {
 		name = gid
@@ -114,7 +116,11 @@ func rememberUploadedTorrent(gid string) {
 		return
 	}
 	dest := uniqueFilePath(filepath.Join(dir, name))
-	src, err := os.Open("temp.torrent")
+	srcPath := "temp.torrent"
+	if len(srcPaths) > 0 && srcPaths[0] != "" {
+		srcPath = srcPaths[0]
+	}
+	src, err := os.Open(srcPath)
 	if err != nil {
 		logger.Error("failed to read uploaded torrent: %v", err)
 		return
@@ -148,6 +154,7 @@ func relinkFollowedTasks(gid string, children []string) {
 			taskStore.Add(users.Task{
 				GID:    child,
 				UserID: task.UserID,
+				ChatID: task.ChatID,
 				Link:   task.Link,
 				Name:   task.Name,
 				Engine: task.Engine,

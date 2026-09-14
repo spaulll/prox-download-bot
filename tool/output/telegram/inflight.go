@@ -20,26 +20,49 @@ const inflightFile = "inflight_msgs.json"
 
 var inflightMu sync.Mutex
 
-type inflightState struct {
-	ChatID     int64   `json:"chat_id"`
-	MessageIDs []int64 `json:"message_ids"`
+type inflightEntry struct {
+	ChatID    int64 `json:"chat_id"`
+	MessageID int64 `json:"message_id"`
 }
 
-func loadInflight() inflightState {
+type inflightState struct {
+	// new multi-chat format
+	Entries []inflightEntry `json:"entries,omitempty"`
+	// legacy single-chat format (chat_id + message_ids)
+	ChatID     int64   `json:"chat_id,omitempty"`
+	MessageIDs []int64 `json:"message_ids,omitempty"`
+}
+
+func loadInflightEntries() []inflightEntry {
 	var st inflightState
 	b, err := os.ReadFile(inflightFile)
 	if err != nil {
-		return st
+		return nil
 	}
 	if json.Unmarshal(b, &st) != nil {
 		// corrupted state: drop it
 		_ = os.Remove(inflightFile)
+		return nil
 	}
-	return st
+	if len(st.Entries) > 0 {
+		return st.Entries
+	}
+	if len(st.MessageIDs) > 0 {
+		out := make([]inflightEntry, 0, len(st.MessageIDs))
+		for _, id := range st.MessageIDs {
+			out = append(out, inflightEntry{ChatID: st.ChatID, MessageID: id})
+		}
+		return out
+	}
+	return nil
 }
 
-func saveInflight(st inflightState) {
-	b, err := json.Marshal(st)
+func saveInflightEntries(entries []inflightEntry) {
+	if len(entries) == 0 {
+		_ = os.Remove(inflightFile)
+		return
+	}
+	b, err := json.Marshal(inflightState{Entries: entries})
 	if err != nil {
 		return
 	}
@@ -48,43 +71,44 @@ func saveInflight(st inflightState) {
 
 // inflightAdd registers a message that must be cleaned up after a crash.
 func inflightAdd(chatID int64, messageID int) {
-	if messageID <= 0 {
+	if messageID <= 0 || chatID == 0 {
 		return
 	}
 	inflightMu.Lock()
 	defer inflightMu.Unlock()
-	st := loadInflight()
-	st.ChatID = chatID
-	for _, id := range st.MessageIDs {
-		if id == int64(messageID) {
+	entries := loadInflightEntries()
+	for _, e := range entries {
+		if e.ChatID == chatID && e.MessageID == int64(messageID) {
 			return
 		}
 	}
-	st.MessageIDs = append(st.MessageIDs, int64(messageID))
-	saveInflight(st)
+	entries = append(entries, inflightEntry{ChatID: chatID, MessageID: int64(messageID)})
+	saveInflightEntries(entries)
 }
 
-// inflightRemove unregisters a message that was handled (deleted or kept
-// intentionally as a final summary).
-func inflightRemove(messageID int) {
+// inflightRemoveChat unregisters one chat message that was handled (deleted
+// or kept intentionally as a final summary).
+func inflightRemoveChat(chatID int64, messageID int) {
 	if messageID <= 0 {
 		return
 	}
 	inflightMu.Lock()
 	defer inflightMu.Unlock()
-	st := loadInflight()
-	kept := st.MessageIDs[:0]
-	for _, id := range st.MessageIDs {
-		if id != int64(messageID) {
-			kept = append(kept, id)
+	entries := loadInflightEntries()
+	kept := entries[:0]
+	for _, e := range entries {
+		if e.MessageID == int64(messageID) && (chatID == 0 || e.ChatID == chatID) {
+			continue
 		}
+		kept = append(kept, e)
 	}
-	st.MessageIDs = kept
-	if len(st.MessageIDs) == 0 {
-		_ = os.Remove(inflightFile)
-		return
-	}
-	saveInflight(st)
+	saveInflightEntries(kept)
+}
+
+// inflightRemove unregisters a message ID in every chat (legacy helper kept
+// for call sites that only know the message ID).
+func inflightRemove(messageID int) {
+	inflightRemoveChat(0, messageID)
 }
 
 // inflightCleanup deletes all messages left over from crashed runs.
@@ -92,16 +116,16 @@ func inflightRemove(messageID int) {
 func inflightCleanup(bot *tgBotApi.BotAPI) {
 	inflightMu.Lock()
 	defer inflightMu.Unlock()
-	st := loadInflight()
-	if len(st.MessageIDs) == 0 {
+	entries := loadInflightEntries()
+	if len(entries) == 0 {
 		return
 	}
-	logger.Info("recovery: cleaning %d in-flight message(s) from previous run", len(st.MessageIDs))
-	for _, id := range st.MessageIDs {
-		if id <= 0 {
+	logger.Info("recovery: cleaning %d in-flight message(s) from previous run", len(entries))
+	for _, e := range entries {
+		if e.MessageID <= 0 || e.ChatID == 0 {
 			continue
 		}
-		if _, err := bot.Request(tgBotApi.NewDeleteMessage(st.ChatID, int(id))); err != nil {
+		if _, err := bot.Request(tgBotApi.NewDeleteMessage(e.ChatID, int(e.MessageID))); err != nil {
 			logger.Debug("inflight cleanup delete failed: %v", err)
 		}
 	}

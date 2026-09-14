@@ -2,7 +2,6 @@ package telegram
 
 import (
 	i18nLoc "DownloadBot/i18n"
-	"DownloadBot/internal/config"
 	"DownloadBot/tool/displayUtil/gotree"
 	"DownloadBot/tool/input"
 	"DownloadBot/tool/input/aria2"
@@ -11,7 +10,6 @@ import (
 	logger "DownloadBot/tool/zap"
 	"fmt"
 	tgBotApi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"log"
 	"math/rand"
 	"regexp"
 	"sort"
@@ -20,40 +18,98 @@ import (
 	"time"
 )
 
+// suddenMsg carries an urgent notice plus its task gid for multi-user routing.
+type suddenMsg struct {
+	GID  string
+	Text string
+}
+
 // SuddenMessageChan is a channel for reminding when an emergency message occurs, such as download start and download end
-var SuddenMessageChan = make(chan string, 3)
+var SuddenMessageChan = make(chan suddenMsg, 10)
 
 // TMSelectMessageChan is a channel for reminding when you upload a torrent file or send a magnet(TM is Torrent/Magnet)
-var TMSelectMessageChan = make(chan string, 3)
+var TMSelectMessageChan = make(chan string, 10)
 
-// SuddenMessage is a function for dealing when an emergency message occurs, such as download start and download end
+// SuddenMessage delivers urgent notices (start/pause/stop/error) to BOTH the
+// task owner and all admins so regular users see feedback for their own tasks.
 func SuddenMessage(bot *tgBotApi.BotAPI) {
-	for {
-		a := <-SuddenMessageChan
-		gid := a[2:18]
-		if strings.Contains(a, "[{") {
-			a = strings.Replace(a, gid, input.ToolApp.Aria2.TellName(gid), -1)
+	for m := range SuddenMessageChan {
+		text := m.Text
+		if strings.Contains(text, "[{") && m.GID != "" {
+			text = strings.Replace(text, m.GID, input.ToolApp.Aria2.TellName(m.GID), -1)
 		}
-		myID := typeTrans.Str2Int64(config.GetTelegramUserID())
-		msg := tgBotApi.NewMessage(myID, a)
-		res, err := bot.Send(msg)
-		if err != nil {
-			log.Panic(err)
+		var chats []int64
+		if m.GID == "" {
+			chats = adminChatIDs()
+		} else {
+			chats = chatsForGid(m.GID)
 		}
-		// remember "Download started!" notices so they can be dropped when
-		// the task ends
-		if strings.HasSuffix(a, startedNoticeSuffix()) && strings.Contains(a, "started") {
-			rememberStartedNotice(gid, res.MessageID)
+		for _, chat := range dedupChats(chats) {
+			msg := tgBotApi.NewMessage(chat, text)
+			res, err := bot.Send(msg)
+			if err != nil {
+				logger.Error("sudden message send failed: %v", err)
+				continue
+			}
+			// remember "Download started!" notices so they can be dropped when
+			// the task ends
+			if strings.HasSuffix(text, startedNoticeSuffix()) && strings.Contains(text, "started") && m.GID != "" {
+				rememberStartedNotice(m.GID, chat, res.MessageID)
+			}
 		}
 	}
 }
 
-// Aria2TMSelectMsg is a function for dealing when you upload a torrent file or send a magnet,this function will interrupt the download and output the file list of the torrent file or magnet (TM is Torrent/Magnet)
+// Aria2TMSelectMsg handles torrent/magnet file selection. The picker is
+// mirrored to BOTH the task owner and all admins so whoever added the task
+// sees feedback and either side can confirm the selection.
 func Aria2TMSelectMsg(bot *tgBotApi.BotAPI) {
-	var MessageID []int
-	myID := typeTrans.Str2Int64(config.GetTelegramUserID())
+	pickerMsgIDs := map[int64][]int{}
+	var pickerChats []int64
+	var pickerGID string
 	selectFileList := make([][2]int, 0)
 	directoryTree := make(map[string]interface{}, 0)
+
+	deletePickerMsgs := func() {
+		for chat, ids := range pickerMsgIDs {
+			for _, id := range ids {
+				bot.Send(tgBotApi.NewDeleteMessage(chat, id))
+				inflightRemoveChat(chat, id)
+			}
+		}
+		pickerMsgIDs = map[int64][]int{}
+	}
+	resetPicker := func() {
+		pickerGID = ""
+		pickerChats = nil
+		selectFileList = make([][2]int, 0)
+		directoryTree = make(map[string]interface{}, 0)
+	}
+	// sendChunk mirrors one picker page to every chat: new messages are sent,
+	// existing ones edited in place. msgIdx is the zero-based page index.
+	sendChunk := func(text string, keyboards [][]tgBotApi.InlineKeyboardButton, msgIdx int) {
+		markup := tgBotApi.NewInlineKeyboardMarkup(keyboards...)
+		for _, chat := range pickerChats {
+			ids := pickerMsgIDs[chat]
+			if len(ids) < msgIdx+1 {
+				msg := tgBotApi.NewMessage(chat, text)
+				msg.ReplyMarkup = markup
+				res, err := bot.Send(msg)
+				if err != nil {
+					logger.Error("picker send failed: %v", err)
+					continue
+				}
+				pickerMsgIDs[chat] = append(pickerMsgIDs[chat], res.MessageID)
+				inflightAdd(chat, res.MessageID)
+			} else {
+				newMsg := tgBotApi.NewEditMessageTextAndMarkup(chat, ids[msgIdx], text, markup)
+				if _, err := bot.Send(newMsg); err != nil {
+					logger.Debug("picker edit failed: %v", err)
+				}
+			}
+		}
+	}
+
 	for {
 		a := <-TMSelectMessageChan
 		b := strings.Split(a, "~")
@@ -62,22 +118,18 @@ func Aria2TMSelectMsg(bot *tgBotApi.BotAPI) {
 
 		downloadFilesCount := 0
 		if len(b) != 1 {
+			if pickerGID != "" && gid != pickerGID {
+				// stale button from a previous picker - ignore
+				continue
+			}
 			if b[1] == "Start" { //click start
 				input.ToolApp.Aria2.SetTMDownloadFilesAndStart(gid, selectFileList)
-				for _, val := range MessageID {
-					bot.Send(tgBotApi.NewDeleteMessage(myID, val))
-				}
-				MessageID = make([]int, 0)
-				selectFileList = make([][2]int, 0)
-				directoryTree = make(map[string]interface{}, 0)
+				deletePickerMsgs()
+				resetPicker()
 				continue
 			} else if b[1] == "cancel" {
-				for _, val := range MessageID {
-					bot.Send(tgBotApi.NewDeleteMessage(myID, val))
-				}
-				MessageID = make([]int, 0)
-				selectFileList = make([][2]int, 0)
-				directoryTree = make(map[string]interface{}, 0)
+				deletePickerMsgs()
+				resetPicker()
 				input.ToolApp.Aria2.ForceRemove(gid)
 				continue
 			}
@@ -189,10 +241,17 @@ func Aria2TMSelectMsg(bot *tgBotApi.BotAPI) {
 				}
 			}
 		} else {
-			// new torrent/magnet: fresh picker state (single picker at a time;
-			// stale entries from a previous torrent misalign indexes and panic)
-			directoryTree = make(map[string]interface{}, 0)
-			selectFileList = make([][2]int, 0)
+			// new torrent/magnet: if another picker is still open, clear it
+			// first so its messages do not linger
+			if pickerGID != "" && pickerGID != gid {
+				deletePickerMsgs()
+			}
+			resetPicker()
+			pickerGID = gid
+			pickerChats = dedupChats(chatsForGid(gid))
+			if len(pickerChats) == 0 {
+				pickerChats = adminChatIDs()
+			}
 			fileList := input.ToolApp.Aria2.FormatTMFiles(gid)
 			// magnet metadata arrives asynchronously - poll briefly instead
 			// of building a picker from an empty file list (panic)
@@ -205,11 +264,13 @@ func Aria2TMSelectMsg(bot *tgBotApi.BotAPI) {
 				// release the pause so nothing sticks, skip the picker
 				logger.Error("torrent file list empty for %s, starting as-is", gid)
 				input.ToolApp.Aria2.SetTMDownloadFilesAndStart(gid, nil)
+				resetPicker()
 				continue
 			}
 			if len(fileList) == 1 {
 				// single-file torrent: no selection needed, start directly
 				input.ToolApp.Aria2.SetTMDownloadFilesAndStart(gid, [][2]int{{1, 1}})
+				resetPicker()
 				continue
 			}
 			index := 1
@@ -230,6 +291,8 @@ func Aria2TMSelectMsg(bot *tgBotApi.BotAPI) {
 			// download as-is instead of indexing an empty slice (panic)
 			logger.Error("torrent tree empty for %s, starting as-is", gid)
 			input.ToolApp.Aria2.SetTMDownloadFilesAndStart(gid, nil)
+			deletePickerMsgs()
+			resetPicker()
 			continue
 		}
 		fileListTreeLine := strings.Split(fileListGoTree[0].Print(), "\n")
@@ -243,7 +306,6 @@ func Aria2TMSelectMsg(bot *tgBotApi.BotAPI) {
 		for i, line := range fileListTreeLine {
 			if fileListTreeLineCount != i+1 && characterCount+len(fileListTreeLine[i+1]) > 4096 {
 
-				msg := tgBotApi.NewMessage(myID, text)
 				msgCount++
 				//lastFilesInfo = fileList
 				index := 0
@@ -259,15 +321,7 @@ func Aria2TMSelectMsg(bot *tgBotApi.BotAPI) {
 				if len(inlineKeyBoardRow) != 0 {
 					Keyboards = append(Keyboards, inlineKeyBoardRow)
 				}
-				if msgCount > len(MessageID) {
-					msg.ReplyMarkup = tgBotApi.NewInlineKeyboardMarkup(Keyboards...)
-					res, err := bot.Send(msg)
-					MessageID = append(MessageID, res.MessageID)
-					dropErr(err)
-				} else {
-					newMsg := tgBotApi.NewEditMessageTextAndMarkup(myID, MessageID[msgCount-1], text, tgBotApi.NewInlineKeyboardMarkup(Keyboards...))
-					bot.Send(newMsg)
-				}
+				sendChunk(text, Keyboards, msgCount-1)
 
 				Keyboards = make([][]tgBotApi.InlineKeyboardButton, 0)
 				inlineKeyBoardRow = make([]tgBotApi.InlineKeyboardButton, 0)
@@ -325,16 +379,7 @@ func Aria2TMSelectMsg(bot *tgBotApi.BotAPI) {
 		//dropErr(err)
 
 		//lastFilesInfo = fileList
-		if len(MessageID) < msgCount+1 {
-			msg := tgBotApi.NewMessage(myID, text)
-			msg.ReplyMarkup = tgBotApi.NewInlineKeyboardMarkup(Keyboards...)
-			res, err := bot.Send(msg)
-			dropErr(err)
-			MessageID = append(MessageID, res.MessageID)
-		} else {
-			newMsg := tgBotApi.NewEditMessageTextAndMarkup(myID, MessageID[msgCount], text, tgBotApi.NewInlineKeyboardMarkup(Keyboards...))
-			bot.Send(newMsg)
-		}
+		sendChunk(text, Keyboards, msgCount)
 
 	}
 }
@@ -364,15 +409,33 @@ func pathClass(branch string, trunk *map[string]interface{}) {
 	}
 }
 
-var activeRefreshControl = 0
+var (
+	activeRefreshMu      sync.Mutex
+	activeRefreshControl = map[int64]int{}
+)
 
-// activeRefresh refresh the download info
-func activeRefresh(chatMsgID int, bot *tgBotApi.BotAPI, ticker *time.Ticker, flag int) {
+// setActiveRefreshControl replaces the auto/live view flag for one chat so
+// admin and regular users can each hold an independent live view.
+func setActiveRefreshControl(chatID int64, flag int) {
+	activeRefreshMu.Lock()
+	activeRefreshControl[chatID] = flag
+	activeRefreshMu.Unlock()
+}
+
+func getActiveRefreshControl(chatID int64) int {
+	activeRefreshMu.Lock()
+	defer activeRefreshMu.Unlock()
+	return activeRefreshControl[chatID]
+}
+
+// activeRefresh refreshes the download info in one chat, showing only the
+// requester's own tasks (admins see everything).
+func activeRefresh(requestChatID int64, chatMsgID int, bot *tgBotApi.BotAPI, ticker *time.Ticker, flag int) {
 	var MessageID = 0
-	myID := typeTrans.Str2Int64(config.GetTelegramUserID())
 
-	refreshPath := func(MessageID int, myID int64, bot *tgBotApi.BotAPI, ticker *time.Ticker) int {
-		res := input.ToolApp.Aria2.FormatTellActive()
+	allow := allowGidsFor(requestChatID)
+	refreshPath := func(MessageID int, bot *tgBotApi.BotAPI, ticker *time.Ticker) int {
+		res := input.ToolApp.Aria2.FormatTellActiveFiltered(allow)
 		//log.Println(res, len(res))
 		text := ""
 		if res != "" {
@@ -381,10 +444,14 @@ func activeRefresh(chatMsgID int, bot *tgBotApi.BotAPI, ticker *time.Ticker, fla
 			text = i18nLoc.LocText("noActiveTask")
 		}
 		if MessageID == 0 {
-			msg := tgBotApi.NewMessage(myID, text)
+			msg := tgBotApi.NewMessage(requestChatID, text)
 			msg.ParseMode = "Markdown"
 			res, err := bot.Send(msg)
-			dropErr(err)
+			if err != nil {
+				logger.Error("active refresh send failed: %v", err)
+				ticker.Stop()
+				return -1
+			}
 			if text == i18nLoc.LocText("noActiveTask") {
 				ticker.Stop()
 				return -1
@@ -393,11 +460,11 @@ func activeRefresh(chatMsgID int, bot *tgBotApi.BotAPI, ticker *time.Ticker, fla
 			}
 		} else {
 			if text == i18nLoc.LocText("noActiveTask") {
-				bot.Send(tgBotApi.NewDeleteMessage(myID, MessageID))
+				bot.Send(tgBotApi.NewDeleteMessage(requestChatID, MessageID))
 				ticker.Stop()
 				return -1
 			} else {
-				newMsg := tgBotApi.NewEditMessageText(myID, MessageID, text)
+				newMsg := tgBotApi.NewEditMessageText(requestChatID, MessageID, text)
 				newMsg.ParseMode = "Markdown"
 				bot.Send(newMsg)
 				return newMsg.MessageID
@@ -407,34 +474,48 @@ func activeRefresh(chatMsgID int, bot *tgBotApi.BotAPI, ticker *time.Ticker, fla
 	}
 
 	for {
-		if activeRefreshControl != flag {
+		if getActiveRefreshControl(requestChatID) != flag {
 			if MessageID != 0 {
-				bot.Send(tgBotApi.NewDeleteMessage(myID, MessageID))
+				bot.Send(tgBotApi.NewDeleteMessage(requestChatID, MessageID))
 			}
 			ticker.Stop()
-			msgToDelete := tgBotApi.DeleteMessageConfig{
-				ChatID:    myID,
-				MessageID: chatMsgID,
+			if chatMsgID != 0 {
+				msgToDelete := tgBotApi.DeleteMessageConfig{
+					ChatID:    requestChatID,
+					MessageID: chatMsgID,
+				}
+				_, _ = bot.Request(msgToDelete)
 			}
-			_, _ = bot.Request(msgToDelete)
 			return
 		} else {
 			if MessageID != 0 {
 				select {
 				case _ = <-ticker.C:
-					MessageID = refreshPath(MessageID, myID, bot, ticker)
+					MessageID = refreshPath(MessageID, bot, ticker)
 					if MessageID == -1 {
 						return
 					}
 				}
 			} else {
-				MessageID = refreshPath(MessageID, myID, bot, ticker)
+				MessageID = refreshPath(MessageID, bot, ticker)
 				if MessageID == -1 {
 					return
 				}
 			}
 		}
 	}
+}
+
+// startActiveRefresh replaces any previous live view in chatID with a new one.
+func startActiveRefresh(chatID int64, chatMsgID int) {
+	if activeBot == nil {
+		return
+	}
+	ticker := time.NewTicker(500 * time.Millisecond)
+	rand.Seed(time.Now().UnixNano())
+	flag := rand.Intn(100000) + 1
+	setActiveRefreshControl(chatID, flag)
+	go activeRefresh(chatID, chatMsgID, activeBot, ticker, flag)
 }
 
 // generateGoTree is a function that receive the directory tree structure generated by pathClass(),and file list that user want to select ,to generate goTree,return both goTree and the list of selected files
@@ -553,34 +634,41 @@ func startedNoticeSuffix() string {
 	return strings.TrimPrefix(i18nLoc.LocText("onDownloadStartDes"), "%s")
 }
 
-// startedNotices maps gid -> chat message id of its "Download started!" notice
-// so the notice can be removed once the task ends.
+// startedNotices maps gid -> per-chat message ids of its "Download started!"
+// notices so every mirrored notice can be removed once the task ends.
 var (
 	startedNoticesMu sync.Mutex
-	startedNotices   = map[string]int{}
+	startedNotices   = map[string][]chatMsgID{}
 )
 
-func rememberStartedNotice(gid string, msgID int) {
-	if gid == "" || msgID <= 0 {
+func rememberStartedNotice(gid string, chatID int64, msgID int) {
+	if gid == "" || msgID <= 0 || chatID == 0 {
 		return
 	}
 	startedNoticesMu.Lock()
-	startedNotices[gid] = msgID
+	for _, m := range startedNotices[gid] {
+		if m.ChatID == chatID && m.MsgID == msgID {
+			startedNoticesMu.Unlock()
+			return
+		}
+	}
+	startedNotices[gid] = append(startedNotices[gid], chatMsgID{ChatID: chatID, MsgID: msgID})
 	startedNoticesMu.Unlock()
-	inflightAdd(organizeChatID(), msgID)
+	inflightAdd(chatID, msgID)
 }
 
-// dropStartedNotice removes the "Download started!" notice of a finished task.
+// dropStartedNotice removes the "Download started!" notices of a finished task
+// from every chat that received them.
 func dropStartedNotice(gid string) {
 	if gid == "" {
 		return
 	}
 	startedNoticesMu.Lock()
-	msgID, ok := startedNotices[gid]
+	msgs, ok := startedNotices[gid]
 	delete(startedNotices, gid)
 	startedNoticesMu.Unlock()
 	if ok {
-		deleteMessages(activeBot, organizeChatID(), msgID)
+		deleteChatMsgs(activeBot, msgs)
 	}
 }
 
@@ -588,28 +676,39 @@ func dropStartedNotice(gid string) {
 func (Notifier) OnDownloadStart(events []rpc.Event) {
 	logger.Info(i18nLoc.LocText("onDownloadStartDes"), events)
 
-	SuddenMessageChan <- fmt.Sprintf(i18nLoc.LocText("onDownloadStartDes"), events)
-	aria2.TMMessageChan <- events[0].Gid
-	// show the live progress view automatically, no button press needed
-	go autoShowProgress()
+	if len(events) > 0 {
+		gid := events[0].Gid
+		SuddenMessageChan <- suddenMsg{GID: gid, Text: fmt.Sprintf(i18nLoc.LocText("onDownloadStartDes"), events)}
+		aria2.TMMessageChan <- gid
+		// show the live progress view automatically, no button press needed
+		go autoShowProgress(gid)
+	}
 }
 
 // autoShowProgress starts the live download progress message right after a
-// download begins, replacing any previous auto view (flag mechanism).
-func autoShowProgress() {
+// download begins in every relevant chat (owner + admins, filtered views).
+func autoShowProgress(gid string) {
 	if activeBot == nil {
 		return
 	}
-	// brief delay so the new task is registered as active in aria2
-	time.Sleep(200 * time.Millisecond)
-	if input.ToolApp.Aria2.FormatTellActive() == "" {
-		return
+	// brief delay so the new task is registered as active in aria2 and the
+	// taskStore ownership entry (written right after Download()) is visible
+	time.Sleep(400 * time.Millisecond)
+	chats := chatsForGid(gid)
+	for _, chat := range dedupChats(chats) {
+		var res string
+		if isAdminID(chat) {
+			res = input.ToolApp.Aria2.FormatTellActive()
+		} else {
+			res = input.ToolApp.Aria2.FormatTellActiveFiltered(allowGidsFor(chat))
+		}
+		if res == "" {
+			continue
+		}
+		startActiveRefresh(chat, 0)
+		// stagger so concurrent sends do not race the same aria2 RPC
+		time.Sleep(100 * time.Millisecond)
 	}
-	ticker := time.NewTicker(500 * time.Millisecond)
-	rand.Seed(time.Now().UnixNano())
-	a := rand.Intn(100000)
-	activeRefreshControl = a
-	activeRefresh(0, activeBot, ticker, a)
 }
 
 // OnDownloadPause will be sent when a download is paused. The event is the same struct as the event argument of onDownloadStart() method.
@@ -619,13 +718,21 @@ func (Notifier) OnDownloadPause(events []rpc.Event) {
 		// picker auto-pause for file selection, not a user action - no noise
 		return
 	}
-	SuddenMessageChan <- fmt.Sprintf(i18nLoc.LocText("onDownloadPauseDes"), events)
+	if len(events) > 0 {
+		SuddenMessageChan <- suddenMsg{GID: events[0].Gid, Text: fmt.Sprintf(i18nLoc.LocText("onDownloadPauseDes"), events)}
+	} else {
+		SuddenMessageChan <- suddenMsg{Text: fmt.Sprintf(i18nLoc.LocText("onDownloadPauseDes"), events)}
+	}
 }
 
 // OnDownloadStop will be sent when a download is stopped by the user. The event is the same struct as the event argument of onDownloadStart() method.
 func (Notifier) OnDownloadStop(events []rpc.Event) {
 	logger.Info(i18nLoc.LocText("onDownloadStopDes"), events)
-	SuddenMessageChan <- fmt.Sprintf(i18nLoc.LocText("onDownloadStopDes"), events)
+	if len(events) > 0 {
+		SuddenMessageChan <- suddenMsg{GID: events[0].Gid, Text: fmt.Sprintf(i18nLoc.LocText("onDownloadStopDes"), events)}
+	} else {
+		SuddenMessageChan <- suddenMsg{Text: fmt.Sprintf(i18nLoc.LocText("onDownloadStopDes"), events)}
+	}
 	if len(events) > 0 {
 		dropStartedNotice(events[0].Gid)
 	}
@@ -644,7 +751,11 @@ func (Notifier) OnDownloadComplete(events []rpc.Event) {
 // OnDownloadError will be sent when a download is stopped due to an error. The event is the same struct as the event argument of onDownloadStart() method.
 func (Notifier) OnDownloadError(events []rpc.Event) {
 	logger.Info(i18nLoc.LocText("onDownloadErrorDes"), events)
-	SuddenMessageChan <- fmt.Sprintf(i18nLoc.LocText("onDownloadErrorDes"), events)
+	if len(events) > 0 {
+		SuddenMessageChan <- suddenMsg{GID: events[0].Gid, Text: fmt.Sprintf(i18nLoc.LocText("onDownloadErrorDes"), events)}
+	} else {
+		SuddenMessageChan <- suddenMsg{Text: fmt.Sprintf(i18nLoc.LocText("onDownloadErrorDes"), events)}
+	}
 	if len(events) > 0 {
 		dropStartedNotice(events[0].Gid)
 	}

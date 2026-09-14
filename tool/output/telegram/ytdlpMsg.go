@@ -62,13 +62,20 @@ func taskProgressBar(percent float64) string {
 		strconv.FormatFloat(percent, 'f', 2, 64) + " %"
 }
 
-// startYtdlpDownload runs the yt-dlp pipeline with a live Telegram progress
-// message. Runs asynchronously (call in a goroutine).
-func startYtdlpDownload(bot *tgBotApi.BotAPI, chatID int64, rawURL string) {
+// startYtdlpDownload runs the yt-dlp pipeline with live Telegram progress
+// mirrored to BOTH the requester and all admins. Runs asynchronously (call in
+// a goroutine). gid is the taskStore entry so completion can be recorded;
+// pass "" when unknown.
+func startYtdlpDownload(bot *tgBotApi.BotAPI, ownerChatID int64, rawURL string, gid ...string) {
 	dl := buildYtdlpDownloader()
+	chats := dedupChats(chatsForOwner(ownerChatID))
+	var taskGID string
+	if len(gid) > 0 {
+		taskGID = gid[0]
+	}
 
 	// announce
-	live := NewOrganizeProgressMsg(bot, chatID, "⬇️ Downloading\n"+taskProgressBar(0)+"\n"+rawURL)
+	live := NewDualProgressMsg(bot, chats, "⬇️ Downloading\n"+taskProgressBar(0)+"\n"+rawURL)
 	var lastText string
 	var lastUpdate time.Time
 	report := func(p ytdlp.Progress) {
@@ -96,9 +103,17 @@ func startYtdlpDownload(bot *tgBotApi.BotAPI, chatID int64, rawURL string) {
 			}
 			text = strings.Join(lines, "\n") + "\n" + rawURL
 		case "processing":
+			detail := p.Detail
+			if i := strings.Index(detail, "]"); i >= 0 {
+				detail = detail[:i]
+			}
+			detail = strings.TrimPrefix(detail, "[")
+			if detail == "" {
+				detail = "Processing"
+			}
 			text = "⬇️ Downloading\n" +
 				taskProgressBar(100) + "\n" +
-				strings.SplitN(p.Detail, "]", 2)[0][1:] + "..."
+				detail + "..."
 		case "done":
 			return
 		default:
@@ -113,10 +128,20 @@ func startYtdlpDownload(bot *tgBotApi.BotAPI, chatID int64, rawURL string) {
 	res, err := dl.Download(rawURL, report)
 	if err != nil {
 		logger.Error("yt-dlp download failed: %v", err)
+		if taskGID != "" {
+			taskStore.SetStatus(taskGID, "failed")
+		}
 		if live != nil {
 			live.Update("⚠️ Download failed\n" + err.Error() + "\n" + rawURL)
+		} else {
+			for _, chat := range chats {
+				sendPlain(bot, chat, "⚠️ Download failed\n"+err.Error()+"\n"+rawURL)
+			}
 		}
 		return
+	}
+	if taskGID != "" {
+		taskStore.SetStatus(taskGID, "completed")
 	}
 
 	// final summary (plan style)
@@ -148,10 +173,12 @@ func startYtdlpDownload(bot *tgBotApi.BotAPI, chatID int64, rawURL string) {
 	)
 	if live != nil {
 		live.Update(text)
-		// the live message became the final summary - keep it, untrack it
-		inflightRemove(live.ID())
+		// the live messages became the final summaries - keep them, untrack
+		live.Untrack()
 	} else {
-		sendPlain(bot, chatID, text)
+		for _, chat := range chats {
+			sendPlain(bot, chat, text)
+		}
 	}
 	logger.Info("yt-dlp download completed: %s (%d files)", res.Title, len(res.Files))
 }

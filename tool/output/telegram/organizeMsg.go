@@ -59,7 +59,7 @@ func (m *OrganizeProgressMsg) Delete() {
 	if _, err := m.bot.Request(tgBotApi.NewDeleteMessage(m.chatID, m.messageID)); err != nil {
 		logger.Debug("delete organize message failed: %v", err)
 	}
-	inflightRemove(m.messageID)
+	inflightRemoveChat(m.chatID, m.messageID)
 }
 
 // ID returns the underlying Telegram message ID.
@@ -191,11 +191,40 @@ func organizeChatID() int64 {
 // drives the live Telegram progress messages. Runs asynchronously.
 // isTorrent marks content that arrived via BitTorrent: single files go into
 // a dedicated folder instead of the category root.
+// chats are the delivery targets (owner + admins); legacy single-chat callers
+// pass one ID which is expanded to owner+admins via the gid lookup.
 func runOrganize(bot *tgBotApi.BotAPI, chatID int64, gid, srcPath, displayName string, isTorrent bool) {
+	chats := chatsForGidFast(gid)
+	if len(chats) == 0 {
+		chats = []int64{chatID}
+	} else if chatID != 0 {
+		// keep backward compat: ensure the requested chat is included
+		found := false
+		for _, c := range chats {
+			if c == chatID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			chats = append(chats, chatID)
+		}
+		chats = dedupChats(chats)
+	}
+	runOrganizeDual(bot, chats, gid, srcPath, displayName, isTorrent)
+}
+
+// runOrganizeDual is the multi-user organize pipeline: every progress and
+// summary message is mirrored to all chats (owner + admins).
+func runOrganizeDual(bot *tgBotApi.BotAPI, chats []int64, gid, srcPath, displayName string, isTorrent bool) {
+	chats = dedupChats(chats)
+	if len(chats) == 0 {
+		return
+	}
 	// plan-style "Download completed" message (deleted once organizing ends)
-	completedMsg := sendPlain(bot, chatID, fmt.Sprintf("✅ Download completed\n\n%s", displayName))
-	inflightAdd(chatID, completedMsg)
-	notifyUserTaskDone(gid, displayName)
+	completedMsgs := sendToChats(bot, chats, fmt.Sprintf("✅ Download completed\n\n%s", displayName))
+	trackChatMsgs(completedMsgs)
+	markTaskCompleted(gid)
 
 	cfg := config.GetOrganizeConfig()
 	if !cfg.Enabled {
@@ -213,11 +242,11 @@ func runOrganize(bot *tgBotApi.BotAPI, chatID int64, gid, srcPath, displayName s
 
 	// archive -> extraction pipeline (extract, then re-run organize)
 	if organize.IsArchive(srcPath) {
-		go runArchivePipeline(bot, chatID, gid, org, srcPath, displayName, completedMsg)
+		go runArchivePipelineDual(bot, chats, gid, org, srcPath, displayName, completedMsgs)
 		return
 	}
 
-	report, cleanup := makeOrganizeReporter(bot, chatID, "🔍 Analyzing content")
+	report, cleanup := makeDualOrganizeReporter(bot, chats, "🔍 Analyzing content")
 
 	var (
 		res *organize.Result
@@ -235,7 +264,9 @@ func runOrganize(bot *tgBotApi.BotAPI, chatID int64, gid, srcPath, displayName s
 	}
 	if err != nil {
 		logger.Error("organize failed for %s: %v", srcPath, err)
-		sendPlain(bot, chatID, "⚠️ Organize failed: "+err.Error())
+		for _, chat := range chats {
+			sendPlain(bot, chat, "⚠️ Organize failed: "+err.Error())
+		}
 		return
 	}
 	// a .torrent file was stored: link its follow-torrent children to the
@@ -252,8 +283,8 @@ func runOrganize(bot *tgBotApi.BotAPI, chatID int64, gid, srcPath, displayName s
 	maybeHandleMagnetFile(gid, displayName)
 	// success: wipe intermediates, keep only the final summary
 	cleanup()
-	deleteMessages(bot, chatID, completedMsg)
-	sendOrganizeSummary(bot, chatID, displayName, res)
+	deleteChatMsgs(bot, completedMsgs)
+	sendDualOrganizeSummary(bot, chats, displayName, res)
 }
 
 // samePath reports whether two paths resolve to the same directory.
@@ -287,14 +318,20 @@ func deleteMessages(bot *tgBotApi.BotAPI, chatID int64, ids ...int) {
 		if _, err := bot.Request(tgBotApi.NewDeleteMessage(chatID, id)); err != nil {
 			logger.Debug("delete message failed: %v", err)
 		}
-		inflightRemove(id)
+		inflightRemoveChat(chatID, id)
 	}
 }
 
 // makeOrganizeReporter builds a Reporter that renders the plan-style
 // "Analyzing + moving" live message, plus a cleanup func that deletes it.
 func makeOrganizeReporter(bot *tgBotApi.BotAPI, chatID int64, stepTitle string) (organize.Reporter, func()) {
-	var live *OrganizeProgressMsg
+	return makeDualOrganizeReporter(bot, []int64{chatID}, stepTitle)
+}
+
+// makeDualOrganizeReporter mirrors the live organize message to every chat
+// (owner + admins).
+func makeDualOrganizeReporter(bot *tgBotApi.BotAPI, chats []int64, stepTitle string) (organize.Reporter, func()) {
+	var live *DualProgressMsg
 	var lastText string
 	var lastSend time.Time
 	return func(p organize.Progress) {
@@ -312,7 +349,7 @@ func makeOrganizeReporter(bot *tgBotApi.BotAPI, chatID int64, stepTitle string) 
 		}
 		if live == nil || time.Since(lastSend) >= time.Second {
 			if live == nil {
-				live = NewOrganizeProgressMsg(bot, chatID, text)
+				live = NewDualProgressMsg(bot, chats, text)
 			} else {
 				live.Update(text)
 			}
@@ -324,6 +361,11 @@ func makeOrganizeReporter(bot *tgBotApi.BotAPI, chatID int64, stepTitle string) 
 
 // sendOrganizeSummary posts the final detailed summary (plan style).
 func sendOrganizeSummary(bot *tgBotApi.BotAPI, chatID int64, sourceName string, res *organize.Result) {
+	sendDualOrganizeSummary(bot, []int64{chatID}, sourceName, res)
+}
+
+// sendDualOrganizeSummary posts the final summary to every chat.
+func sendDualOrganizeSummary(bot *tgBotApi.BotAPI, chats []int64, sourceName string, res *organize.Result) {
 	if res == nil {
 		return
 	}
@@ -354,7 +396,9 @@ func sendOrganizeSummary(bot *tgBotApi.BotAPI, chatID int64, sourceName string, 
 		typeTrans.Byte2Readable(float64(res.SizeBytes)),
 		formatDuration(res.Duration),
 	)
-	sendPlain(bot, chatID, text)
+	for _, chat := range dedupChats(chats) {
+		sendPlain(bot, chat, text)
+	}
 }
 
 // handleDownloadComplete is invoked by the notifier on download completion.

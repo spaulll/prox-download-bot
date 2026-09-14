@@ -17,13 +17,29 @@ import (
 
 // runArchivePipeline handles a completed archive download:
 // detect -> extract with live progress -> re-run organize on contents
-// -> final summary. preMsgIDs are intermediate messages (e.g. the "Download
-// completed" notice) deleted together with the progress messages on success.
+// -> final summary. Legacy single-chat wrapper kept for recovery callers.
 func runArchivePipeline(bot *tgBotApi.BotAPI, chatID int64, gid string, org *organize.Organizer, srcPath, displayName string, preMsgIDs ...int) {
+	chats := chatsForGidFast(gid)
+	if len(chats) == 0 {
+		chats = []int64{chatID}
+	}
+	var pre []chatMsgID
+	for _, id := range preMsgIDs {
+		if id != 0 {
+			pre = append(pre, chatMsgID{ChatID: chatID, MsgID: id})
+		}
+	}
+	runArchivePipelineDual(bot, chats, gid, org, srcPath, displayName, pre)
+}
+
+// runArchivePipelineDual mirrors every progress and summary message to all
+// chats (owner + admins). preMsgs are intermediate messages deleted on success.
+func runArchivePipelineDual(bot *tgBotApi.BotAPI, chats []int64, gid string, org *organize.Organizer, srcPath, displayName string, preMsgs []chatMsgID) {
 	start := time.Now()
+	chats = dedupChats(chats)
 
 	// "Archive detected" message (plan style)
-	live := NewOrganizeProgressMsg(bot, chatID,
+	live := NewDualProgressMsg(bot, chats,
 		"🗂 Organizing...\n\n📦 Archive detected\n→ Preparing extraction")
 	if live == nil {
 		return
@@ -169,12 +185,15 @@ func runArchivePipeline(bot *tgBotApi.BotAPI, chatID int64, gid string, org *org
 		res.SizeBytes = dirTreeSize(stageDir)
 	}
 	res.Duration = time.Since(start)
-	sendArchiveSummary(bot, chatID, displayName, res)
+	sendDualArchiveSummary(bot, chats, displayName, res)
 	maybeDropTorrentFile(gid)
 	maybeHandleMagnetFile(gid, displayName)
 	// success: wipe intermediates, keep only the final summary
 	live.Delete()
-	deleteMessages(bot, chatID, append(preMsgIDs, popRecoveryNotice())...)
+	if rn := popRecoveryNoticeDual(); len(rn) > 0 {
+		preMsgs = append(preMsgs, rn...)
+	}
+	deleteChatMsgs(bot, preMsgs)
 }
 
 // uniqueDest appends _1, _2 ... when the destination dir exists.
@@ -204,6 +223,11 @@ func dirTreeSize(path string) int64 {
 
 // sendArchiveSummary posts the final archive summary (plan style).
 func sendArchiveSummary(bot *tgBotApi.BotAPI, chatID int64, archiveName string, res *organize.Result) {
+	sendDualArchiveSummary(bot, []int64{chatID}, archiveName, res)
+}
+
+// sendDualArchiveSummary posts the final archive summary to every chat.
+func sendDualArchiveSummary(bot *tgBotApi.BotAPI, chats []int64, archiveName string, res *organize.Result) {
 	if res == nil {
 		return
 	}
@@ -234,5 +258,7 @@ func sendArchiveSummary(bot *tgBotApi.BotAPI, chatID int64, archiveName string, 
 		typeTrans.Byte2Readable(float64(res.SizeBytes)),
 		formatDuration(res.Duration),
 	)
-	sendPlain(bot, chatID, text)
+	for _, chat := range dedupChats(chats) {
+		sendPlain(bot, chat, text)
+	}
 }

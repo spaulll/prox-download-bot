@@ -9,6 +9,7 @@ import (
 type Task struct {
 	GID     string    `json:"gid"`
 	UserID  int64     `json:"userId"`
+	ChatID  int64     `json:"chatId,omitempty"`
 	Link    string    `json:"link"`
 	Name    string    `json:"name"`
 	AddedAt time.Time `json:"addedAt"`

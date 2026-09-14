@@ -132,24 +132,47 @@ func resumeUnprocessedArchives() {
 		logger.Info("recovery: resuming unprocessed archive %s", path)
 		go func(src, displayName string) {
 			org := buildOrganizer()
-			runArchivePipeline(activeBot, organizeChatID(), "", org, src, displayName, popRecoveryNotice())
+			runArchivePipelineDual(activeBot, adminChatIDs(), "", org, src, displayName, popRecoveryNoticeDual())
 		}(path, name)
 	}
 	if resumed > 0 {
-		id := sendPlain(activeBot, organizeChatID(),
+		msgs := sendToChats(activeBot, adminChatIDs(),
 			fmt.Sprintf("🔄 Recovery\n\nBot restarted mid-organize\n→ Resuming %d archive(s) from the previous run", resumed))
-		inflightAdd(organizeChatID(), id)
-		recoveryNoticeID = id
+		trackChatMsgs(msgs)
+		setRecoveryNotice(msgs)
 	}
 }
 
-// recoveryNoticeID is the "🔄 Recovery" notice sent at startup, deleted once
-// the resumed organize finishes so it does not linger in the chat.
+// recoveryNotices are the "🔄 Recovery" notices sent at startup (one per
+// admin chat), deleted once the resumed organize finishes so they do not
+// linger in the chat.
+var recoveryNotices []chatMsgID
+
+// setRecoveryNotice stores the recovery notices.
+func setRecoveryNotice(msgs []chatMsgID) {
+	recoveryNotices = append([]chatMsgID(nil), msgs...)
+}
+
+// popRecoveryNoticeDual returns the recovery notices (once).
+func popRecoveryNoticeDual() []chatMsgID {
+	msgs := recoveryNotices
+	recoveryNotices = nil
+	return msgs
+}
+
+// recoveryNoticeID is the legacy single-chat recovery notice (primary admin).
 var recoveryNoticeID int
 
-// popRecoveryNotice returns the recovery notice message ID (once).
+// popRecoveryNotice returns the recovery notice message ID (once, legacy).
 func popRecoveryNotice() int {
-	id := recoveryNoticeID
-	recoveryNoticeID = 0
-	return id
+	if id := recoveryNoticeID; id != 0 {
+		recoveryNoticeID = 0
+		return id
+	}
+	for _, m := range popRecoveryNoticeDual() {
+		if m.ChatID == primaryAdminID() {
+			return m.MsgID
+		}
+	}
+	return 0
 }
