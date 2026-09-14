@@ -103,6 +103,20 @@ func initUsers() {
 	for _, id := range adminIDs {
 		userStore.SetRole(id, users.RoleAdmin)
 	}
+	repairStaleAdmins()
+}
+
+// repairStaleAdmins demotes stored RoleAdmin entries that are not in the
+// configured admin list. Legacy data (multi-admin configs, hand-edited files,
+// or records written without a role field defaulting to 0) would otherwise
+// leave regular users invisible to the admin Users list and unremovable.
+func repairStaleAdmins() {
+	for _, u := range userStore.All() {
+		if u.Role == users.RoleAdmin && !isAdminID(u.ID) {
+			logger.Info("repair: demoting stale admin %d to approved", u.ID)
+			userStore.SetRole(u.ID, users.RoleApproved)
+		}
+	}
 }
 
 func isAdminID(id int64) bool {

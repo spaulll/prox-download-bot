@@ -6,6 +6,7 @@ import (
 
 	i18nLoc "DownloadBot/i18n"
 	"DownloadBot/internal/users"
+	logger "DownloadBot/tool/zap"
 )
 
 func TestMultiUserRouting(t *testing.T) {
@@ -125,5 +126,32 @@ func TestApprovedUsersList(t *testing.T) {
 	}
 	if !strings.Contains(text, i18nLoc.LocText("noApprovedUsers")) {
 		t.Fatalf("empty list text wrong:\n%s", text)
+	}
+}
+
+func TestRepairStaleAdmins(t *testing.T) {
+	i18nLoc.LocLan("en")
+	logger.InitLog("", "", "info")
+	adminIDs = []int64{1}
+	userStore = users.Open(t.TempDir() + "/users.json")
+	// legacy stale record: regular user stored as RoleAdmin (0)
+	userStore.SetRole(1, users.RoleAdmin)
+	userStore.SetRole(200, users.RoleAdmin)
+	if got := len(approvedUsers()); got != 0 {
+		t.Fatalf("approvedUsers() before repair = %d, want 0 (stale admin invisible)", got)
+	}
+	repairStaleAdmins()
+	if u, _ := userStore.Get(200); u.Role != users.RoleApproved {
+		t.Fatalf("stale admin role = %v, want approved", users.RoleName(u.Role))
+	}
+	if u, _ := userStore.Get(1); u.Role != users.RoleAdmin {
+		t.Fatalf("real admin role = %v, want admin", users.RoleName(u.Role))
+	}
+	if got := len(approvedUsers()); got != 1 {
+		t.Fatalf("approvedUsers() after repair = %d, want 1", got)
+	}
+	text, markup := buildApprovedUsersList()
+	if markup == nil || !strings.Contains(text, "200") {
+		t.Fatalf("repaired user missing from list:\n%s", text)
 	}
 }
