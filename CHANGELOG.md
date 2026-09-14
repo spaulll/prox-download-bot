@@ -2,6 +2,59 @@
 
 All notable changes to this project are documented in this file.
 
+## v0.4.0 - 2026-09-14
+
+### Added
+- **Forward/send Telegram files** to the bot (documents, video, audio, GIF,
+  voice notes, video notes, photos). They ride the exact same pipeline as
+  links: owner + admin progress, then automatic organizing by file type.
+- **Local Bot API server integration** — `output.telegram.api-id`,
+  `api-hash`, `api-base`, `api-dir`, a portable `run-tg-api.sh` launcher and
+  a `tg-bot-api.service` unit. This raises the forwarded-file limit from
+  Telegram's **20 MB** bot cap to **2 GB**.
+- **Real byte-level progress** for forwarded-file fetches (percent, speed,
+  ETA), read from the API server's temp store. Attribution is strict — a
+  fetch only shows numbers when exactly one file is growing — so concurrent
+  downloads never display each other's bytes (worst case: an honest spinner).
+- **One-shot setup script** `setup.sh` with an interactive mode (`-i`):
+  installs dependencies, writes `config.json`, creates folders, installs and
+  enables systemd units, and can build/install the Bot API server. The local
+  API server is **off by default** and enabled via a `[N/y]` prompt.
+
+### Changed
+- Progress views now refresh every **5 seconds** (was every second).
+- **❌ Remove task** lists only *active* (removable) tasks; finished downloads
+  remain in **✅ Finished/Stopped** history.
+- Telegram API errors (including rate-limit `429`) are **non-fatal** — the bot
+  backs off using the server's retry hint instead of exiting.
+- Downloaded copies of forwarded files are removed from the API server cache
+  after staging, so large files no longer occupy disk twice.
+- `output.telegram.user-id` must be a single numeric id (enforced at startup).
+
+### Fixed
+- Forwarded files showed a stuck `0 %` bar, or no progress at all.
+- `getFile` blocks until the local server finishes downloading a file; the
+  call now runs in the background so live progress can drive the bar.
+- Bot could crash with `429 Too Many Requests` during heavy progress updates.
+- Duplicate/parallel live progress messages for a single download.
+- Markdown escaping: usernames containing `_` and filenames inside code spans
+  are handled correctly (no more rejected messages).
+- Stale temp copies left behind by interrupted fetches.
+- Stored admin roles from older configs are demoted to approved at startup, so
+  the **👥 Users** list shows everyone and revoke works.
+
+### Removed
+- **All prebuilt targets except `linux/amd64` and `linux/arm64`.**
+  Dropped: `linux/armv7`, `linux/386`, `windows/amd64`, `darwin/amd64`,
+  `darwin/arm64`.
+  **Why:** this bot is built for Linux servers and NAS boxes — it drives
+  `aria2` over RPC, runs under `systemd`, and (for files over 20 MB) runs the
+  Linux `tdlib` Bot API server alongside it. The other targets were compiled
+  by CI but never supported or tested, so shipping them was misleading. CI now
+  builds only the two targets the project actually targets. (`windows/arm64`
+  was already impossible: the vendored `go-ole` via `gopsutil` supports only
+  `windows/386` and `windows/amd64`.)
+
 ## v0.3.0 - 2026-09-14
 
 ### Added
