@@ -277,18 +277,32 @@ func localFetchTimeout(total int64) time.Duration {
 }
 
 // fetchTelegramLocalFile waits for the local Bot API server to finish
-// downloading fileID, ticking roughly once a second so the caller can
-// animate liveness. Returns the absolute server-side path and total size.
+// downloading fileID, driving onTick for live progress while waiting.
 //
-// NOTE: getFile only reveals file_path once the fetch COMPLETES, so true
-// byte progress is unknowable here - callers must not render percentages.
-func fetchTelegramLocalFile(ctx context.Context, bot *tgBotApi.BotAPI, gid, fileID string, onTick func()) (string, int64, error) {
-	// learn the total size first (present even before the fetch completes)
-	var total int64
-	if f, err := bot.GetFile(tgBotApi.FileConfig{FileID: fileID}); err == nil && f.FileSize > 0 {
-		total = int64(f.FileSize)
-		setLocalFetchTotal(gid, total)
+// IMPORTANT: in --local mode getFile BLOCKS until the server has downloaded
+// the whole file (it stores it on disk, then returns the path). So getFile
+// runs in a background goroutine and completes it; meanwhile we watch the
+// server's */temp/ store for byte-level progress and tick the bar.
+func fetchTelegramLocalFile(ctx context.Context, bot *tgBotApi.BotAPI, gid, fileID string, knownTotal int64, onTick func()) (string, int64, error) {
+	total := knownTotal
+	type done struct {
+		path string
+		err  error
 	}
+	doneCh := make(chan done, 1)
+	go func() {
+		f, err := bot.GetFile(tgBotApi.FileConfig{FileID: fileID})
+		if err != nil {
+			doneCh <- done{err: err}
+			return
+		}
+		if f.FileSize > 0 {
+			total = int64(f.FileSize)
+			setLocalFetchTotal(gid, total)
+		}
+		doneCh <- done{path: f.FilePath}
+	}()
+
 	deadline := time.Now().Add(localFetchTimeout(total))
 	loopStart := time.Now()
 	prevScan := scanTempDir()
@@ -298,11 +312,18 @@ func fetchTelegramLocalFile(ctx context.Context, bot *tgBotApi.BotAPI, gid, file
 	var lastSize int64 = -1
 	var lastAt time.Time
 	rate := 0.0
-	stable := 0
 	for time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
 			return "", total, fmt.Errorf("download cancelled")
+		case d := <-doneCh:
+			if d.err != nil {
+				return "", total, d.err
+			}
+			if d.path == "" {
+				return "", total, fmt.Errorf("no file path returned")
+			}
+			return d.path, total, nil
 		default:
 		}
 		curScan := scanTempDir()
@@ -328,45 +349,6 @@ func fetchTelegramLocalFile(ctx context.Context, bot *tgBotApi.BotAPI, gid, file
 			onTick()
 		}
 		prevScan = curScan
-		f, err := bot.GetFile(tgBotApi.FileConfig{FileID: fileID})
-		if err != nil {
-			logger.Debug("local getFile failed: %v", err)
-			if !sleepCtx(ctx, time.Second) {
-				return "", total, fmt.Errorf("download cancelled")
-			}
-			continue
-		}
-		if f.FileSize > 0 {
-			total = int64(f.FileSize)
-			setLocalFetchTotal(gid, total)
-		}
-		if f.FilePath == "" {
-			if !sleepCtx(ctx, time.Second) {
-				return "", total, fmt.Errorf("download cancelled")
-			}
-			continue
-		}
-		st, err := os.Stat(f.FilePath)
-		if err != nil || st.IsDir() {
-			if !sleepCtx(ctx, time.Second) {
-				return "", total, fmt.Errorf("download cancelled")
-			}
-			continue
-		}
-		sz := st.Size()
-		if total > 0 && sz >= total {
-			return f.FilePath, total, nil
-		}
-		if total == 0 && sz > 0 {
-			if sz == lastSize {
-				if stable++; stable >= 3 {
-					return f.FilePath, sz, nil
-				}
-			} else {
-				stable = 0
-			}
-			lastSize = sz
-		}
 		if !sleepCtx(ctx, time.Second) {
 			return "", total, fmt.Errorf("download cancelled")
 		}
@@ -472,7 +454,7 @@ func startTelegramLocalDownload(bot *tgBotApi.BotAPI, chats []int64, gid, displa
 			lastText = text
 		}
 	}
-	src, total, err := fetchTelegramLocalFile(ctx, bot, gid, fileID, update)
+	src, total, err := fetchTelegramLocalFile(ctx, bot, gid, fileID, int64(fileSize), update)
 	if err != nil {
 		logger.Error("telegram local fetch failed for %s: %v", displayName, err)
 		if err.Error() == "download cancelled" {
