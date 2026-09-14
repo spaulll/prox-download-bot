@@ -21,6 +21,11 @@ type Config struct {
 			// "http://127.0.0.1:8081". Empty = use Telegram cloud (20 MB
 			// bot download cap); set = local server (up to 2 GB).
 			ApiBase string `json:"api-base,omitempty"`
+			// ApiDir is the local server's data directory (the --dir flag),
+			// e.g. "/mnt/nas/.tg-bot-api". Used to watch in-progress
+			// downloads under <dir>/temp for live byte progress. Empty =
+			// no temp watching (indeterminate progress).
+			ApiDir string `json:"api-dir,omitempty"`
 		} `json:"telegram"`
 	} `json:"output"`
 	MaxIndex int    `json:"max-index"`

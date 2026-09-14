@@ -11,7 +11,8 @@
       "user-id": "",
       "api-id": 0,
       "api-hash": "",
-      "api-base": ""
+      "api-base": "",
+      "api-dir": ""
     }
   },
   "max-index": 10,

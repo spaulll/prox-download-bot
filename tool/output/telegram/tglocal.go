@@ -28,16 +28,19 @@ import (
 // localFetch tracks one in-progress server-side Telegram fetch so the
 // "Downloading" list can show it next to aria2 tasks (which know nothing
 // about these fetches). Cancel stops the wait; live lets removal drop the
-// progress messages immediately.
+// progress messages immediately. downloaded < 0 means unknown byte progress;
+// rate <= 0 means unknown speed.
 type localFetch struct {
-	gid    string
-	name   string
-	userID int64
-	chatID int64
-	total  int64
-	start  time.Time
-	cancel context.CancelFunc
-	live   *DualProgressMsg
+	gid        string
+	name       string
+	userID     int64
+	chatID     int64
+	total      int64
+	downloaded int64
+	rate       float64
+	start      time.Time
+	cancel     context.CancelFunc
+	live       *DualProgressMsg
 }
 
 var (
@@ -46,10 +49,11 @@ var (
 )
 
 // registerLocalFetch announces a fetch; unregisterLocalFetch withdraws it.
+// downloaded starts unknown (-1) until temp watching attributes bytes.
 func registerLocalFetch(gid, name string, userID, chatID, total int64, cancel context.CancelFunc, live *DualProgressMsg) {
 	localActiveMu.Lock()
 	defer localActiveMu.Unlock()
-	localActive[gid] = &localFetch{gid: gid, name: name, userID: userID, chatID: chatID, total: total, start: time.Now(), cancel: cancel, live: live}
+	localActive[gid] = &localFetch{gid: gid, name: name, userID: userID, chatID: chatID, total: total, downloaded: -1, start: time.Now(), cancel: cancel, live: live}
 }
 
 func setLocalFetchTotal(gid string, total int64) {
@@ -57,6 +61,17 @@ func setLocalFetchTotal(gid string, total int64) {
 	defer localActiveMu.Unlock()
 	if f, ok := localActive[gid]; ok && total > 0 {
 		f.total = total
+	}
+}
+
+// setLocalFetchProgress records attributed bytes and smoothed rate.
+// downloaded < 0 clears back to unknown.
+func setLocalFetchProgress(gid string, downloaded int64, rate float64) {
+	localActiveMu.Lock()
+	defer localActiveMu.Unlock()
+	if f, ok := localActive[gid]; ok {
+		f.downloaded = downloaded
+		f.rate = rate
 	}
 }
 
@@ -126,14 +141,99 @@ func formatLocalActive(requester int64) string {
 		// (a literal code span) where escapes would show up raw; only
 		// backticks themselves must go.
 		name := strings.ReplaceAll(f.name, "`", "")
-		fmt.Fprintf(&b, "*Filename:* `%s`\n📥 Fetching from Telegram...\n*Size:* %s *Elapsed:* %s\n*GID:* `%s`",
-			name, size, formatDuration(time.Since(f.start)), f.gid)
+		head := fmt.Sprintf("*Filename:* `%s`\n", name)
+		if f.downloaded >= 0 && f.total > 0 {
+			// real byte progress attributed from the server temp store
+			pct := float64(f.downloaded) * 100.0 / float64(f.total)
+			if pct > 100 {
+				pct = 100
+			}
+			head += taskProgressBar(pct) + "\n" +
+				fmt.Sprintf("*Downloaded:* %s *of* %s",
+					typeTrans.Byte2Readable(float64(f.downloaded)), size)
+			if f.rate > 0 {
+				head += fmt.Sprintf("\n*Speed:* %s/s", typeTrans.Byte2Readable(f.rate))
+				left := f.total - f.downloaded
+				if left > 0 {
+					head += fmt.Sprintf(" *ETA:* %s", formatDuration(time.Duration(float64(left)/f.rate)*time.Second))
+				}
+			}
+		} else {
+			head += "📥 Fetching from Telegram...\n" +
+				fmt.Sprintf("*Size:* %s *Elapsed:* %s", size, formatDuration(time.Since(f.start)))
+		}
+		head += fmt.Sprintf("\n*GID:* `%s`", f.gid)
+		b.WriteString(head)
 	}
 	return b.String()
 }
 
-// spinnerFrames animates the fetching indicator (byte progress is unknowable
-// in local mode, but elapsed time proves the fetch is alive).
+// tempFileStat is a size/mtime snapshot of one server temp file.
+type tempFileStat struct {
+	size  int64
+	mtime time.Time
+}
+
+// scanTempDir snapshots <api-dir>/temp (nil when temp watching is off).
+func scanTempDir() map[string]tempFileStat {
+	dir := config.GetTelegramApiDir()
+	if dir == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(filepath.Join(dir, "temp"))
+	if err != nil {
+		return nil
+	}
+	out := make(map[string]tempFileStat, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		out[e.Name()] = tempFileStat{size: info.Size(), mtime: info.ModTime()}
+	}
+	return out
+}
+
+// attributeTemp maps in-progress server bytes to one fetch. Candidates are
+// temp files unseen at fetch start, modified since, holding (0, total]
+// bytes. Exactly one candidate = attributable; anything else = unknown.
+// This strict rule keeps concurrent fetches from ever showing each other's
+// bytes (worst case is the honest spinner, never wrong numbers).
+func attributeTemp(baseline, current map[string]tempFileStat, start time.Time, total int64) (int64, bool) {
+	if current == nil {
+		return 0, false
+	}
+	var found int64 = -1
+	for name, cur := range current {
+		if _, ok := baseline[name]; ok {
+			continue // predates our fetch: not provably ours
+		}
+		if cur.size <= 0 {
+			continue
+		}
+		if total > 0 && cur.size > total {
+			continue
+		}
+		if cur.mtime.Before(start.Add(-2 * time.Second)) {
+			continue
+		}
+		if found >= 0 {
+			return 0, false // ambiguous: two candidates
+		}
+		found = cur.size
+	}
+	if found < 0 {
+		return 0, false
+	}
+	return found, true
+}
+
+// spinnerFrames animates the fetching indicator while byte progress is
+// unattributed (no fetch yet visible, or several concurrent fetches).
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
 // localFetchTimeout bounds the server-side fetch wait. Assumes at least
@@ -166,7 +266,11 @@ func fetchTelegramLocalFile(ctx context.Context, bot *tgBotApi.BotAPI, gid, file
 		setLocalFetchTotal(gid, total)
 	}
 	deadline := time.Now().Add(localFetchTimeout(total))
+	loopStart := time.Now()
+	baseline := scanTempDir()
 	var lastSize int64 = -1
+	var lastAt time.Time
+	rate := 0.0
 	stable := 0
 	for time.Now().Before(deadline) {
 		select {
@@ -174,10 +278,30 @@ func fetchTelegramLocalFile(ctx context.Context, bot *tgBotApi.BotAPI, gid, file
 			return "", total, fmt.Errorf("download cancelled")
 		default:
 		}
+		// attribute server-side temp bytes to this fetch when unambiguous
+		if downloaded, ok := attributeTemp(baseline, scanTempDir(), loopStart, total); ok {
+			now := time.Now()
+			if lastAt.IsZero() {
+				lastAt = loopStart
+			}
+			if dt := now.Sub(lastAt).Seconds(); dt > 0 && downloaded >= lastSize && lastSize >= 0 {
+				inst := float64(downloaded-lastSize) / dt
+				if rate <= 0 {
+					rate = inst
+				} else {
+					rate = 0.7*rate + 0.3*inst
+				}
+			}
+			lastSize, lastAt = downloaded, now
+			setLocalFetchProgress(gid, downloaded, rate)
+			onTick()
+		} else {
+			setLocalFetchProgress(gid, -1, 0)
+			onTick()
+		}
 		f, err := bot.GetFile(tgBotApi.FileConfig{FileID: fileID})
 		if err != nil {
 			logger.Debug("local getFile failed: %v", err)
-			onTick()
 			if !sleepCtx(ctx, time.Second) {
 				return "", total, fmt.Errorf("download cancelled")
 			}
@@ -188,7 +312,6 @@ func fetchTelegramLocalFile(ctx context.Context, bot *tgBotApi.BotAPI, gid, file
 			setLocalFetchTotal(gid, total)
 		}
 		if f.FilePath == "" {
-			onTick()
 			if !sleepCtx(ctx, time.Second) {
 				return "", total, fmt.Errorf("download cancelled")
 			}
@@ -196,14 +319,12 @@ func fetchTelegramLocalFile(ctx context.Context, bot *tgBotApi.BotAPI, gid, file
 		}
 		st, err := os.Stat(f.FilePath)
 		if err != nil || st.IsDir() {
-			onTick()
 			if !sleepCtx(ctx, time.Second) {
 				return "", total, fmt.Errorf("download cancelled")
 			}
 			continue
 		}
 		sz := st.Size()
-		onTick()
 		if total > 0 && sz >= total {
 			return f.FilePath, total, nil
 		}
@@ -278,23 +399,45 @@ func startTelegramLocalDownload(bot *tgBotApi.BotAPI, chats []int64, gid, displa
 	tick := 0
 	var lastText string
 	update := func() {
-		frame := spinnerFrames[tick%len(spinnerFrames)]
-		tick++
 		localActiveMu.Lock()
-		var total int64
-		if f, ok := localActive[gid]; ok {
-			total = f.total
+		f, ok := localActive[gid]
+		var total, downloaded int64
+		var rate float64
+		if ok {
+			total, downloaded, rate = f.total, f.downloaded, f.rate
 		}
 		localActiveMu.Unlock()
 		size := "…"
 		if total > 0 {
 			size = typeTrans.Byte2Readable(float64(total))
 		}
-		text := "⬇️ Downloading\n\n" +
-			"📥 Fetching from Telegram " + frame + "\n" +
-			"📦 Size: " + size + "\n" +
-			"⏱ Elapsed: " + formatDuration(time.Since(start)) + "\n\n" +
-			displayName
+		var text string
+		if ok && downloaded >= 0 && total > 0 {
+			// attributed server bytes: real bar, downloaded, speed, ETA
+			pct := float64(downloaded) * 100.0 / float64(total)
+			if pct > 100 {
+				pct = 100
+			}
+			text = "⬇️ Downloading\n" +
+				taskProgressBar(pct) + "\n" +
+				fmt.Sprintf("Downloaded: %s of %s",
+					typeTrans.Byte2Readable(float64(downloaded)), size)
+			if rate > 0 {
+				text += "\nSpeed: " + typeTrans.Byte2Readable(rate) + "/s"
+				if left := total - downloaded; left > 0 {
+					text += "\nETA: " + formatDuration(time.Duration(float64(left)/rate)*time.Second)
+				}
+			}
+			text += "\n" + displayName
+		} else {
+			frame := spinnerFrames[tick%len(spinnerFrames)]
+			tick++
+			text = "⬇️ Downloading\n\n" +
+				"📥 Fetching from Telegram " + frame + "\n" +
+				"📦 Size: " + size + "\n" +
+				"⏱ Elapsed: " + formatDuration(time.Since(start)) + "\n\n" +
+				displayName
+		}
 		if text != lastText {
 			live.Update(text)
 			lastText = text

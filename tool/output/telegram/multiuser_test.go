@@ -337,3 +337,37 @@ func TestTelegramHistoryAndCancel(t *testing.T) {
 		t.Fatal("removed task should be gone")
 	}
 }
+
+func TestAttributeTemp(t *testing.T) {
+	start := time.Now()
+	mk := func(names map[string]int64, age time.Duration) map[string]tempFileStat {
+		out := map[string]tempFileStat{}
+		for n, s := range names {
+			out[n] = tempFileStat{size: s, mtime: start.Add(-age)}
+		}
+		return out
+	}
+	fresh := mk(map[string]int64{"5": 100}, 0)
+	if got, ok := attributeTemp(map[string]tempFileStat{}, fresh, start, 1000); !ok || got != 100 {
+		t.Fatalf("single candidate: got %d,%v want 100,true", got, ok)
+	}
+	// pre-existing file is not attributable even when growing
+	base := mk(map[string]int64{"5": 50}, time.Minute)
+	if _, ok := attributeTemp(base, fresh, start, 1000); ok {
+		t.Fatal("pre-existing temp file must not attribute")
+	}
+	// two candidates: ambiguous, never guess
+	two := mk(map[string]int64{"5": 100, "6": 200}, 0)
+	if _, ok := attributeTemp(map[string]tempFileStat{}, two, start, 1000); ok {
+		t.Fatal("two candidates must stay unknown")
+	}
+	// oversized candidate excluded (another bigger fetch)
+	big := mk(map[string]int64{"5": 5000}, 0)
+	if _, ok := attributeTemp(map[string]tempFileStat{}, big, start, 1000); ok {
+		t.Fatal("oversized temp file must not attribute")
+	}
+	// temp watching disabled
+	if _, ok := attributeTemp(map[string]tempFileStat{}, nil, start, 1000); ok {
+		t.Fatal("nil scan must stay unknown")
+	}
+}

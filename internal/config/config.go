@@ -113,6 +113,12 @@ func GetTelegramApiBase() string {
 	return strings.TrimSuffix(strings.TrimSpace(info.Output.Telegram.ApiBase), "/")
 }
 
+// GetTelegramApiDir returns the local server's data directory ("" = unknown,
+// temp watching disabled).
+func GetTelegramApiDir() string {
+	return strings.TrimSpace(info.Output.Telegram.ApiDir)
+}
+
 // GetMaxIndex is the maximum number of shows
 func GetMaxIndex() int {
 	return info.MaxIndex
