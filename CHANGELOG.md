@@ -2,6 +2,25 @@
 
 All notable changes to this project are documented in this file.
 
+## v0.3.0 - 2026-09-14
+
+### Added
+- Live download/organize progress is mirrored to both the task owner and the
+  admin (previously admin-only)
+- Torrent/magnet file picker is shown to the owner plus all admins
+- Admin **👥 Users** button: lists approved users with a per-user Remove
+  button that revokes access (re-request via `/start` still works)
+- Personal live view: the **⬇️ Downloading** button shows regular users only
+  their own tasks, admins see everything
+- Pause-all / resume-all for regular users now affects only their own tasks
+
+### Fixed
+- Users adding a link saw no feedback at all (every reply went to the admin
+  chat); start/pause/error notices now reach the task owner too
+- Crash-safe in-flight message tracking now supports multiple chats
+- Uploaded `.torrent` files use per-user temp files and record ownership, so
+  concurrent uploads no longer clash
+
 ## v0.2.1 - 2026-09-04
 
 ### Removed
