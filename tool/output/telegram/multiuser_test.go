@@ -118,8 +118,18 @@ func TestApprovedUsersList(t *testing.T) {
 		t.Fatalf("removed user still listed:\n%s", text)
 	}
 
+	// underscore usernames must be markdown-escaped (unescaped '_' makes
+	// Telegram reject the message, which panics the send path)
+	userStore.UpsertStarted(103, "aniket_050", "A N")
+	userStore.SetRole(103, users.RoleApproved)
+	text, _ = buildApprovedUsersList()
+	if !strings.Contains(text, `@aniket\_050`) {
+		t.Fatalf("username not markdown-escaped:\n%s", text)
+	}
+
 	// empty list: no markup, friendly message
 	userStore.SetRole(101, users.RoleDenied)
+	userStore.SetRole(103, users.RoleDenied)
 	text, markup = buildApprovedUsersList()
 	if markup != nil {
 		t.Fatal("expected nil markup with no approved users")

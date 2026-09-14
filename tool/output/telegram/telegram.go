@@ -186,6 +186,34 @@ func approvedUsers() []users.User {
 	return out
 }
 
+// escapeMarkdown escapes legacy-Markdown control characters so arbitrary
+// usernames and names (e.g. @aniket_050) cannot break Telegram entity
+// parsing and crash the send path.
+func escapeMarkdown(s string) string {
+	r := strings.NewReplacer(
+		`\`, `\\`,
+		`_`, `\_`,
+		`*`, `\*`,
+		`[`, `\[`,
+		`]`, `\]`,
+		`(`, `\(`,
+		`)`, `\)`,
+		`~`, `\~`,
+		"`", "\\`",
+		`>`, `\>`,
+		`#`, `\#`,
+		`+`, `\+`,
+		`-`, `\-`,
+		`=`, `\=`,
+		`|`, `\|`,
+		`{`, `\{`,
+		`}`, `\}`,
+		`.`, `\.`,
+		`!`, `\!`,
+	)
+	return r.Replace(s)
+}
+
 // buildApprovedUsersList renders the admin user-management list with one
 // Remove button per user. Returns nil markup when the list is empty.
 func buildApprovedUsersList() (string, *tgBotApi.InlineKeyboardMarkup) {
@@ -196,10 +224,11 @@ func buildApprovedUsersList() (string, *tgBotApi.InlineKeyboardMarkup) {
 	lines := i18nLoc.LocText("approvedUsersTitle") + "\n"
 	rows := make([][]tgBotApi.InlineKeyboardButton, 0, len(list))
 	for _, u := range list {
-		lines += "\n• " + accessUserLabel(u.ID) + fmt.Sprintf("  `%d`", u.ID)
+		label := accessUserLabel(u.ID)
+		lines += "\n• " + escapeMarkdown(label) + fmt.Sprintf("  `%d`", u.ID)
 		rows = append(rows, tgBotApi.NewInlineKeyboardRow(
 			tgBotApi.NewInlineKeyboardButtonData(
-				i18nLoc.LocText("removeUserButton")+" "+accessUserLabel(u.ID),
+				i18nLoc.LocText("removeUserButton")+" "+label,
 				fmt.Sprintf("removeuser~%d:31", u.ID)),
 		))
 	}
