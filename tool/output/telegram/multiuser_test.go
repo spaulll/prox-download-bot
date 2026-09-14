@@ -339,35 +339,32 @@ func TestTelegramHistoryAndCancel(t *testing.T) {
 }
 
 func TestAttributeTemp(t *testing.T) {
-	start := time.Now()
-	mk := func(names map[string]int64, age time.Duration) map[string]tempFileStat {
-		out := map[string]tempFileStat{}
-		for n, s := range names {
-			out[n] = tempFileStat{size: s, mtime: start.Add(-age)}
-		}
-		return out
+	total := int64(1000)
+	// born file = attributable
+	nilScan := map[string]tempFileStat{}
+	if got, ok := attributeGrow(nilScan, map[string]tempFileStat{"9": {size: 100}}, total); !ok || got != 100 {
+		t.Fatalf("new file: got %d,%v want 100,true", got, ok)
 	}
-	fresh := mk(map[string]int64{"5": 100}, 0)
-	if got, ok := attributeTemp(map[string]tempFileStat{}, fresh, start, 1000); !ok || got != 100 {
-		t.Fatalf("single candidate: got %d,%v want 100,true", got, ok)
+	// growing file (already present in prev) = attributable
+	if got, ok := attributeGrow(map[string]tempFileStat{"9": {size: 100}}, map[string]tempFileStat{"9": {size: 400}}, total); !ok || got != 400 {
+		t.Fatalf("grown file: got %d,%v want 400,true", got, ok)
 	}
-	// pre-existing file is not attributable even when growing
-	base := mk(map[string]int64{"5": 50}, time.Minute)
-	if _, ok := attributeTemp(base, fresh, start, 1000); ok {
-		t.Fatal("pre-existing temp file must not attribute")
+	// stalled file (present, unchanged) = not attributable
+	if _, ok := attributeGrow(map[string]tempFileStat{"9": {size: 400}}, map[string]tempFileStat{"9": {size: 400}}, total); ok {
+		t.Fatal("stalled file must not attribute")
 	}
-	// two candidates: ambiguous, never guess
-	two := mk(map[string]int64{"5": 100, "6": 200}, 0)
-	if _, ok := attributeTemp(map[string]tempFileStat{}, two, start, 1000); ok {
-		t.Fatal("two candidates must stay unknown")
+	// two growers = ambiguous, never guess
+	twoP := map[string]tempFileStat{"7": {size: 10}, "8": {size: 20}}
+	twoC := map[string]tempFileStat{"7": {size: 150}, "8": {size: 260}}
+	if _, ok := attributeGrow(twoP, twoC, total); ok {
+		t.Fatal("two growers must stay unknown")
 	}
-	// oversized candidate excluded (another bigger fetch)
-	big := mk(map[string]int64{"5": 5000}, 0)
-	if _, ok := attributeTemp(map[string]tempFileStat{}, big, start, 1000); ok {
-		t.Fatal("oversized temp file must not attribute")
+	// oversized candidate excluded
+	if _, ok := attributeGrow(nilScan, map[string]tempFileStat{"9": {size: 5000}}, total); ok {
+		t.Fatal("oversized file must not attribute")
 	}
 	// temp watching disabled
-	if _, ok := attributeTemp(map[string]tempFileStat{}, nil, start, 1000); ok {
+	if _, ok := attributeGrow(nilScan, nil, total); ok {
 		t.Fatal("nil scan must stay unknown")
 	}
 }
@@ -385,10 +382,10 @@ func TestTempWatchIntegration(t *testing.T) {
 	if err := os.MkdirAll(dir+"/botA/temp", 0o755); err != nil {
 		t.Fatal(err)
 	}
-	start := time.Now()
-	baseline := scanTempDir()
-	if len(baseline) != 0 {
-		t.Fatalf("baseline should be empty, got %v", baseline)
+	total := int64(1000)
+	prev := scanTempDir()
+	if len(prev) != 0 {
+		t.Fatalf("initial scan should be empty, got %v", prev)
 	}
 	writeTemp := func(name string, size int) {
 		t.Helper()
@@ -402,15 +399,21 @@ func TestTempWatchIntegration(t *testing.T) {
 		f.Close()
 	}
 	writeTemp("5", 100)
-	if got, ok := attributeTemp(baseline, scanTempDir(), start, 1000); !ok || got != 100 {
-		t.Fatalf("growing temp: got %d,%v want 100,true", got, ok)
+	cur := scanTempDir()
+	if got, ok := attributeGrow(prev, cur, total); !ok || got != 100 {
+		t.Fatalf("born temp: got %d,%v want 100,true", got, ok)
 	}
+	prev = cur
 	writeTemp("5", 400)
-	if got, ok := attributeTemp(baseline, scanTempDir(), start, 1000); !ok || got != 400 {
+	cur = scanTempDir()
+	if got, ok := attributeGrow(prev, cur, total); !ok || got != 400 {
 		t.Fatalf("grown temp: got %d,%v want 400,true", got, ok)
 	}
-	writeTemp("6", 50)
-	if _, ok := attributeTemp(baseline, scanTempDir(), start, 1000); ok {
-		t.Fatal("concurrent temp files must stay unknown")
+	prev = cur
+	writeTemp("5", 450)
+	writeTemp("6", 100)
+	cur = scanTempDir()
+	if _, ok := attributeGrow(prev, cur, total); ok {
+		t.Fatal("concurrent growing temps must stay unknown")
 	}
 }

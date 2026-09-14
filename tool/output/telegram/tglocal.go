@@ -217,33 +217,38 @@ func scanTempDir() map[string]tempFileStat {
 	return out
 }
 
-// attributeTemp maps in-progress server bytes to one fetch. Candidates are
-// temp files unseen at fetch start, modified since, holding (0, total]
-// bytes. Exactly one candidate = attributable; anything else = unknown.
-// This strict rule keeps concurrent fetches from ever showing each other's
-// bytes (worst case is the honest spinner, never wrong numbers).
-func attributeTemp(baseline, current map[string]tempFileStat, start time.Time, total int64) (int64, bool) {
-	if current == nil {
+// attributeGrow maps in-progress server bytes to this fetch by watching
+// growth between two consecutive scans: a file counts only if it was born or
+// grew since the previous scan, holds (0..total] bytes, and is the ONLY such
+// file. Multiple growers = ambiguous = unknown (concurrent fetches never see
+// each other's bytes; the worst case is the honest spinner, never wrong
+// numbers). Pre-existing/stalled files are ignored, so this works whether or
+// not the server started the temp file before this fetch began.
+func attributeGrow(prev, cur map[string]tempFileStat, total int64) (int64, bool) {
+	if cur == nil {
 		return 0, false
 	}
 	var found int64 = -1
-	for name, cur := range current {
-		if _, ok := baseline[name]; ok {
-			continue // predates our fetch: not provably ours
-		}
-		if cur.size <= 0 {
+	for name, c := range cur {
+		if c.size <= 0 {
 			continue
 		}
-		if total > 0 && cur.size > total {
+		if total > 0 && c.size > total {
 			continue
 		}
-		if cur.mtime.Before(start.Add(-2 * time.Second)) {
+		var grew bool
+		if p, ok := prev[name]; ok {
+			grew = c.size > p.size
+		} else {
+			grew = true // born since last scan
+		}
+		if !grew {
 			continue
 		}
 		if found >= 0 {
-			return 0, false // ambiguous: two candidates
+			return 0, false // ambiguous: two moving files
 		}
-		found = cur.size
+		found = c.size
 	}
 	if found < 0 {
 		return 0, false
@@ -286,7 +291,10 @@ func fetchTelegramLocalFile(ctx context.Context, bot *tgBotApi.BotAPI, gid, file
 	}
 	deadline := time.Now().Add(localFetchTimeout(total))
 	loopStart := time.Now()
-	baseline := scanTempDir()
+	prevScan := scanTempDir()
+	if len(prevScan) == 0 {
+		prevScan = nil
+	}
 	var lastSize int64 = -1
 	var lastAt time.Time
 	rate := 0.0
@@ -297,8 +305,9 @@ func fetchTelegramLocalFile(ctx context.Context, bot *tgBotApi.BotAPI, gid, file
 			return "", total, fmt.Errorf("download cancelled")
 		default:
 		}
+		curScan := scanTempDir()
 		// attribute server-side temp bytes to this fetch when unambiguous
-		if downloaded, ok := attributeTemp(baseline, scanTempDir(), loopStart, total); ok {
+		if downloaded, ok := attributeGrow(prevScan, curScan, total); ok {
 			now := time.Now()
 			if lastAt.IsZero() {
 				lastAt = loopStart
@@ -318,6 +327,7 @@ func fetchTelegramLocalFile(ctx context.Context, bot *tgBotApi.BotAPI, gid, file
 			setLocalFetchProgress(gid, -1, 0)
 			onTick()
 		}
+		prevScan = curScan
 		f, err := bot.GetFile(tgBotApi.FileConfig{FileID: fileID})
 		if err != nil {
 			logger.Debug("local getFile failed: %v", err)
