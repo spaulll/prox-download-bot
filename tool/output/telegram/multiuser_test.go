@@ -371,3 +371,45 @@ func TestAttributeTemp(t *testing.T) {
 		t.Fatal("nil scan must stay unknown")
 	}
 }
+
+func TestTempWatchIntegration(t *testing.T) {
+	dir := t.TempDir()
+	cfg := `{"input":{"aria2":{"aria2-server":"ws://127.0.0.1:6800/jsonrpc","aria2-key":"x"}},` +
+		`"output":{"telegram":{"bot-key":"k","user-id":"1","api-base":"http://127.0.0.1:8081","api-dir":"` + dir + `"}},` +
+		`"max-index":10,"language":"en","downloadFolder":"/tmp","organize":{"enabled":false},"log":{"level":"info"}}`
+	if err := os.WriteFile(dir+"/c.json", []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config.InitConfig(dir + "/c.json")
+	if err := os.MkdirAll(dir+"/temp", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	baseline := scanTempDir()
+	if len(baseline) != 0 {
+		t.Fatalf("baseline should be empty, got %v", baseline)
+	}
+	writeTemp := func(name string, size int) {
+		t.Helper()
+		f, err := os.Create(dir + "/temp/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.Write(make([]byte, size)); err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+	}
+	writeTemp("5", 100)
+	if got, ok := attributeTemp(baseline, scanTempDir(), start, 1000); !ok || got != 100 {
+		t.Fatalf("growing temp: got %d,%v want 100,true", got, ok)
+	}
+	writeTemp("5", 400)
+	if got, ok := attributeTemp(baseline, scanTempDir(), start, 1000); !ok || got != 400 {
+		t.Fatalf("grown temp: got %d,%v want 400,true", got, ok)
+	}
+	writeTemp("6", 50)
+	if _, ok := attributeTemp(baseline, scanTempDir(), start, 1000); ok {
+		t.Fatal("concurrent temp files must stay unknown")
+	}
+}
