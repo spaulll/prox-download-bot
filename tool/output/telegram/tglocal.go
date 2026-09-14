@@ -94,8 +94,12 @@ func formatLocalActive(requester int64) string {
 		if f.total > 0 {
 			size = typeTrans.Byte2Readable(float64(f.total))
 		}
+		// NOTE: no escapeMarkdown here - the name sits inside backticks
+		// (a literal code span) where escapes would show up raw; only
+		// backticks themselves must go.
+		name := strings.ReplaceAll(f.name, "`", "")
 		fmt.Fprintf(&b, "*Filename:* `%s`\n📥 Fetching from Telegram...\n*Size:* %s *Elapsed:* %s\n*GID:* `%s`",
-			escapeMarkdown(f.name), size, formatDuration(time.Since(f.start)), f.gid)
+			name, size, formatDuration(time.Since(f.start)), f.gid)
 	}
 	return b.String()
 }

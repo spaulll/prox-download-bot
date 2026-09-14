@@ -121,7 +121,7 @@ func TestApprovedUsersList(t *testing.T) {
 		t.Fatalf("removed user still listed:\n%s", text)
 	}
 
-	// underscore usernames must be markdown-escaped (unescaped '_' makes
+	// underscore names must be markdown-escaped (unescaped '_' makes
 	// Telegram reject the message, which panics the send path)
 	userStore.UpsertStarted(103, "aniket_050", "A N")
 	userStore.SetRole(103, users.RoleApproved)
@@ -272,11 +272,11 @@ func TestFormatLocalActive(t *testing.T) {
 		unregisterLocalFetch("tg2")
 	})
 	all := formatLocalActive(1)
-	if !strings.Contains(all, `a\_show`) || !strings.Contains(all, `b\_movie`) {
+	if !strings.Contains(all, "`a_show.mkv`") || !strings.Contains(all, "`b_movie.mp4`") {
 		t.Fatalf("admin should see all fetches:\n%s", all)
 	}
 	own := formatLocalActive(100)
-	if !strings.Contains(own, `a\_show`) || strings.Contains(own, `b\_movie`) {
+	if !strings.Contains(own, "`a_show.mkv`") || strings.Contains(own, "b_movie") {
 		t.Fatalf("user 100 should see only own fetch:\n%s", own)
 	}
 	if got := formatLocalActive(999); got != "" {
@@ -285,7 +285,14 @@ func TestFormatLocalActive(t *testing.T) {
 	// underscore names must be markdown-escaped (list sends with Markdown)
 	registerLocalFetch("tg3", "my_file_name.mkv", 100, 100)
 	defer unregisterLocalFetch("tg3")
-	if got := formatLocalActive(100); !strings.Contains(got, `my\_file\_name`) {
-		t.Fatalf("fetch name not markdown-escaped:\n%s", got)
+	if got := formatLocalActive(100); !strings.Contains(got, "`my_file_name.mkv`") {
+		t.Fatalf("fetch name mangled, want raw name in backticks:\n%s", got)
+	}
+	// names sit inside backticks (literal span): escaping would show raw, so
+	// only backticks themselves are stripped, nothing escaped
+	registerLocalFetch("tg4", "evil`code.mkv", 100, 100)
+	defer unregisterLocalFetch("tg4")
+	if got := formatLocalActive(100); strings.Contains(got, "`evil`") || !strings.Contains(got, "evilcode.mkv") {
+		t.Fatalf("backtick in name not neutralized:\n%s", got)
 	}
 }
