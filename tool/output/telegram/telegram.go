@@ -15,6 +15,7 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -632,31 +633,96 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 						msg.Text = i18nLoc.LocText("unknownLink")
 					}
 					if update.Message.Document != nil {
-						bt, _ := bot.GetFileDirectURL(update.Message.Document.FileID)
-						resp, err := http.Get(bt)
-						dropErr(err)
-						defer resp.Body.Close()
-						tmpName := fmt.Sprintf("temp_%d_%d.torrent", senderID, time.Now().UnixNano())
-						out, err := os.Create(tmpName)
-						dropErr(err)
-						_, err = io.Copy(out, resp.Body)
-						out.Close()
-						dropErr(err)
-						if gid, ok := input.ToolApp.Aria2.Download(tmpName); ok {
-							taskStore.Add(users.Task{
-								GID:    gid,
-								UserID: senderID,
-								ChatID: update.Message.Chat.ID,
-								Link:   update.Message.Document.FileName,
-								Engine: "aria2",
-								Status: "downloading",
-							})
-							rememberUploadedTorrent(gid, tmpName)
-							_ = os.Remove(tmpName)
-							notifyUserAdded(senderID, senderUsername, update.Message.Document.FileName)
-							msg.Text = ""
+						doc := update.Message.Document
+						if isTorrentUpload(doc.FileName, doc.MimeType) {
+							bt, _ := bot.GetFileDirectURL(doc.FileID)
+							resp, err := http.Get(bt)
+							dropErr(err)
+							defer resp.Body.Close()
+							tmpName := fmt.Sprintf("temp_%d_%d.torrent", senderID, time.Now().UnixNano())
+							out, err := os.Create(tmpName)
+							dropErr(err)
+							_, err = io.Copy(out, resp.Body)
+							out.Close()
+							dropErr(err)
+							if gid, ok := input.ToolApp.Aria2.Download(tmpName); ok {
+								taskStore.Add(users.Task{
+									GID:    gid,
+									UserID: senderID,
+									ChatID: update.Message.Chat.ID,
+									Link:   doc.FileName,
+									Engine: "aria2",
+									Status: "downloading",
+								})
+								rememberUploadedTorrent(gid, tmpName)
+								_ = os.Remove(tmpName)
+								notifyUserAdded(senderID, senderUsername, doc.FileName)
+								msg.Text = ""
+							} else {
+								_ = os.Remove(tmpName)
+							}
+						} else if reply := handleTelegramFile(bot, senderID, update.Message.Chat.ID, senderUsername, doc.FileID, doc.FileName, doc.FileSize); reply != "" {
+							msg.Text = reply
 						} else {
-							_ = os.Remove(tmpName)
+							msg.Text = ""
+						}
+					} else if update.Message.Video != nil {
+						v := update.Message.Video
+						name := v.FileName
+						if name == "" {
+							name = fmt.Sprintf("video_%d.mp4", time.Now().UnixNano())
+						}
+						if reply := handleTelegramFile(bot, senderID, update.Message.Chat.ID, senderUsername, v.FileID, name, v.FileSize); reply != "" {
+							msg.Text = reply
+						} else {
+							msg.Text = ""
+						}
+					} else if update.Message.Audio != nil {
+						a := update.Message.Audio
+						name := a.FileName
+						if name == "" {
+							name = fmt.Sprintf("audio_%d.mp3", time.Now().UnixNano())
+						}
+						if reply := handleTelegramFile(bot, senderID, update.Message.Chat.ID, senderUsername, a.FileID, name, a.FileSize); reply != "" {
+							msg.Text = reply
+						} else {
+							msg.Text = ""
+						}
+					} else if update.Message.Animation != nil {
+						a := update.Message.Animation
+						name := a.FileName
+						if name == "" {
+							name = fmt.Sprintf("animation_%d.mp4", time.Now().UnixNano())
+						}
+						if reply := handleTelegramFile(bot, senderID, update.Message.Chat.ID, senderUsername, a.FileID, name, a.FileSize); reply != "" {
+							msg.Text = reply
+						} else {
+							msg.Text = ""
+						}
+					} else if update.Message.Voice != nil {
+						v := update.Message.Voice
+						name := fmt.Sprintf("voice_%d.oga", time.Now().UnixNano())
+						if reply := handleTelegramFile(bot, senderID, update.Message.Chat.ID, senderUsername, v.FileID, name, v.FileSize); reply != "" {
+							msg.Text = reply
+						} else {
+							msg.Text = ""
+						}
+					} else if update.Message.VideoNote != nil {
+						v := update.Message.VideoNote
+						name := fmt.Sprintf("videonote_%d.mp4", time.Now().UnixNano())
+						if reply := handleTelegramFile(bot, senderID, update.Message.Chat.ID, senderUsername, v.FileID, name, v.FileSize); reply != "" {
+							msg.Text = reply
+						} else {
+							msg.Text = ""
+						}
+					} else if len(update.Message.Photo) > 0 {
+						// sizes come smallest-first: the last one is the largest
+						p := update.Message.Photo[len(update.Message.Photo)-1]
+						name := fmt.Sprintf("photo_%d.jpg", time.Now().UnixNano())
+						if reply := handleTelegramFile(bot, senderID, update.Message.Chat.ID, senderUsername, p.FileID, name, p.FileSize); reply != "" {
+							msg.Text = reply
+						} else {
+							msg.Text = ""
 						}
 					}
 					/*if update.Message.Video != nil {
@@ -719,6 +785,68 @@ func isDownloadable(text string) bool {
 	return strings.Contains(text, "http://") || strings.Contains(text, "https://") ||
 		strings.Contains(text, "ftp://") || strings.HasPrefix(text, "magnet:?") ||
 		strings.HasSuffix(text, ".torrent")
+}
+
+// maxTelegramFileBytes is the Bot API content-download cap for regular bots.
+// Larger files must arrive as links instead.
+const maxTelegramFileBytes = 20 * 1024 * 1024
+
+// isTorrentUpload reports whether an uploaded file is a .torrent.
+func isTorrentUpload(fileName, mimeType string) bool {
+	if strings.HasSuffix(strings.ToLower(fileName), ".torrent") {
+		return true
+	}
+	return strings.EqualFold(mimeType, "application/x-bittorrent")
+}
+
+// safeOutName strips any directory components so a Telegram filename is safe
+// to pass as aria2's out option.
+func safeOutName(name string) string {
+	name = filepath.Base(strings.ReplaceAll(name, "\\", "/"))
+	name = strings.TrimSpace(name)
+	if name == "" || name == "." || name == "/" {
+		return ""
+	}
+	return name
+}
+
+// handleTelegramFile downloads a Telegram-hosted file through aria2 (saved
+// under its original name) so it flows through the normal progress and
+// organize pipeline exactly like a link. The Bot API file URL contains the
+// bot token, so it is never stored or echoed anywhere - only the filename is
+// used for task records and notifications. Returns reply text ("" means the
+// pipeline started and the caller should send nothing).
+func handleTelegramFile(bot *tgBotApi.BotAPI, senderID, chatID int64, senderUsername, fileID, fileName string, fileSize int) string {
+	if fileName == "" {
+		fileName = fmt.Sprintf("file_%d", time.Now().UnixNano())
+	}
+	out := safeOutName(fileName)
+	if out == "" {
+		return i18nLoc.LocText("unknownLink")
+	}
+	if fileSize > maxTelegramFileBytes {
+		return fmt.Sprintf(i18nLoc.LocText("fileTooLarge"), typeTrans.Byte2Readable(float64(fileSize)))
+	}
+	url, err := bot.GetFileDirectURL(fileID)
+	if err != nil || url == "" {
+		logger.Error("telegram file url failed for %s: %v", out, err)
+		return i18nLoc.LocText("unknownLink")
+	}
+	gid, ok := input.ToolApp.Aria2.DownloadAs(url, out)
+	if !ok {
+		return i18nLoc.LocText("unknownLink")
+	}
+	taskStore.Add(users.Task{
+		GID:    gid,
+		UserID: senderID,
+		ChatID: chatID,
+		Link:   "tg:file:" + out,
+		Name:   out,
+		Engine: "aria2",
+		Status: "downloading",
+	})
+	notifyUserAdded(senderID, senderUsername, out)
+	return ""
 }
 
 // notifyUserAdded informs admins that a user added a task (plan style).

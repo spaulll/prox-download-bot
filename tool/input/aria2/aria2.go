@@ -518,6 +518,25 @@ func (a Aria2) Download(uri string) (string, bool) {
 	return "", false
 }
 
+// DownloadAs adds an http/ftp uri to aria2, saving it under the out file
+// name (used for Telegram-uploaded files so the original filename survives
+// and the organize pipeline sees the real name and extension).
+func (a Aria2) DownloadAs(uri, out string) (string, bool) {
+	httpFtp, _ := regexp.MatchString(`^(https?|ftps?)://.*$`, uri)
+	if !httpFtp || out == "" {
+		return "", false
+	}
+	uriData := make([]string, 0)
+	uriData = append(uriData, uri)
+	opt := rpc2.Option{"max-file-not-found": "100", "out": out}
+	gid, err := aria2Rpc.AddURI(uriData, opt)
+	if err != nil || gid == "" {
+		logger.Error("addUri with out failed: %v", err)
+		return "", false
+	}
+	return gid, true
+}
+
 // FormatTMFiles is a function that can format the file information of torrent/magnet file, the return value is [][2]string,0 is file name,1 is file size
 func (a Aria2) FormatTMFiles(gid string) [][]string {
 	var fileList [][]string

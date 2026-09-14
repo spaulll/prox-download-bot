@@ -165,3 +165,30 @@ func TestRepairStaleAdmins(t *testing.T) {
 		t.Fatalf("repaired user missing from list:\n%s", text)
 	}
 }
+
+func TestTelegramFileHelpers(t *testing.T) {
+	if !isTorrentUpload("movie.torrent", "") {
+		t.Error("movie.torrent should be a torrent upload")
+	}
+	if !isTorrentUpload("MOVIE.TORRENT", "") {
+		t.Error("upper-case .torrent should be a torrent upload")
+	}
+	if !isTorrentUpload("x.bin", "application/x-bittorrent") {
+		t.Error("bittorrent mime should be a torrent upload")
+	}
+	if isTorrentUpload("movie.mkv", "video/x-matroska") {
+		t.Error("movie.mkv must not be a torrent upload")
+	}
+	for in, want := range map[string]string{
+		"Some Show S01E01.mkv": "Some Show S01E01.mkv",
+		"/etc/passwd":          "passwd",
+		`..\windows\evil.exe`:  "evil.exe",
+		"  spaced.mp4  ":        "spaced.mp4",
+		"":                     "",
+		".":                    "",
+	} {
+		if got := safeOutName(in); got != want {
+			t.Errorf("safeOutName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
