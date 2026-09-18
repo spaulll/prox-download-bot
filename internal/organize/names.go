@@ -23,6 +23,11 @@ var (
 	bracketRe     = regexp.MustCompile(`\[[^\]]*\]`)
 	parenRe       = regexp.MustCompile(`\([^)]*\)`)
 	movieYearRe   = regexp.MustCompile(`\b((?:19|20)[0-9]{2})\b`)
+	// editionCut matches "edition" phrases (IMAX, director's cut,
+	// theatrical/final/ultimate cuts, special editions, uncut, Criterion,
+	// open matte, HFR, ...). Applied to post-year text only, so genuine
+	// title words like "The Final Cut (2004)" are never stripped.
+	editionCut = regexp.MustCompile(`(?i)\b(imax|uncut|criterion|open[\s._-]*matte|hfr|[46]0fps|120fps|3d|directors?(?:['’]s)?[\s._-]*cut|theatrical(?:[\s._-]*cut)?|final[\s._-]*cut|ultimate(?:[\s._-]*cut|[\s._-]*edition)?|special[\s._-]*edition|extended[\s._-]*edition)\b.*`)
 	spaceRe       = regexp.MustCompile(`\s+`)
 	episodeRe     = regexp.MustCompile(`(?i)\b(s[0-9]{1,2}[._ -]?e[0-9]{1,3}|[0-9]{1,2}x[0-9]{1,3}|e[0-9]{1,3}(?:\b|\.[a-z0-9]{2,4}$))`)
 	seRe          = regexp.MustCompile(`(?i)\bs([0-9]{1,2})[._ -]?e[0-9]{1,3}\b`)
@@ -207,6 +212,12 @@ func CleanMovieFolderName(name string) string {
 	s = bracketRe.ReplaceAllString(s, " ")
 	s = parenRe.ReplaceAllString(s, " ")
 	s = strings.NewReplacer(".", " ", "_", " ").Replace(s)
+	// strip edition tags (IMAX, director's cut, ...) from the post-year
+	// segment only: title words before the year are left intact
+	if loc := movieYearRe.FindStringIndex(s); loc != nil {
+		pre, post := s[:loc[0]], s[loc[0]:]
+		s = pre + editionCut.ReplaceAllString(post, "")
+	}
 	s = tagCut.ReplaceAllString(s, "")
 	s = yearBareRe.ReplaceAllString(s, "")
 	s = spaceRe.ReplaceAllString(s, " ")
