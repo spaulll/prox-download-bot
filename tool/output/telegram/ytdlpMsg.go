@@ -169,7 +169,7 @@ func startYtdlpDownload(bot *tgBotApi.BotAPI, ownerChatID int64, rawURL string, 
 		fileList,
 		saved,
 		typeTrans.Byte2Readable(float64(res.SizeBytes)),
-		formatDuration(res.Duration),
+		formatDuration(totalDuration(taskGID, res.Duration)),
 	)
 	if live != nil {
 		live.Update(text)

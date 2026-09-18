@@ -149,6 +149,22 @@ func libraryRoots() map[string]string {
 	}
 }
 
+// totalDuration returns the wall-clock time from the download request to
+// now, so final summaries show download + extract + organize instead of
+// just the organize step. Falls back to the pipeline-only duration when the
+// task entry is unknown (e.g. bot restarted mid-download: taskStore is
+// in-memory only).
+func totalDuration(gid string, fallback time.Duration) time.Duration {
+	if taskStore != nil && gid != "" {
+		if t, ok := taskStore.Get(gid); ok && !t.AddedAt.IsZero() {
+			if d := time.Since(t.AddedAt); d > fallback {
+				return d
+			}
+		}
+	}
+	return fallback
+}
+
 // formatDuration renders "1m 42s" style durations.
 func formatDuration(d time.Duration) string {
 	if d < time.Second {
@@ -284,6 +300,7 @@ func runOrganizeDual(bot *tgBotApi.BotAPI, chats []int64, gid, srcPath, displayN
 	// success: wipe intermediates, keep only the final summary
 	cleanup()
 	deleteChatMsgs(bot, completedMsgs)
+	res.Duration = totalDuration(gid, res.Duration)
 	sendDualOrganizeSummary(bot, chats, displayName, res)
 }
 

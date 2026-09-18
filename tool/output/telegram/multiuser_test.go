@@ -417,3 +417,21 @@ func TestTempWatchIntegration(t *testing.T) {
 		t.Fatal("concurrent growing temps must stay unknown")
 	}
 }
+
+func TestTotalDuration(t *testing.T) {
+	taskStore = users.NewTaskStore(t.TempDir() + "/tasks.json")
+	// task requested 2h ago, organize took 3s -> total must be ~2h
+	taskStore.Add(users.Task{GID: "old", UserID: 100, Link: "http://x", Engine: "aria2",
+		AddedAt: time.Now().Add(-2 * time.Hour)})
+	if d := totalDuration("old", 3*time.Second); d < 2*time.Hour || d > 2*time.Hour+time.Minute {
+		t.Fatalf("totalDuration(old) = %v, want ~2h", d)
+	}
+	// unknown gid (e.g. restart wiped the in-memory store) -> fallback
+	if d := totalDuration("missing", 3*time.Second); d != 3*time.Second {
+		t.Fatalf("totalDuration(missing) = %v, want fallback 3s", d)
+	}
+	// empty gid -> fallback
+	if d := totalDuration("", 5*time.Second); d != 5*time.Second {
+		t.Fatalf("totalDuration(\"\") = %v, want fallback 5s", d)
+	}
+}

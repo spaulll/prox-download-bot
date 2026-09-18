@@ -191,7 +191,8 @@ func runArchivePipelineDual(bot *tgBotApi.BotAPI, chats []int64, gid string, org
 	if res.SizeBytes == 0 {
 		res.SizeBytes = dirTreeSize(stageDir)
 	}
-	res.Duration = time.Since(start)
+	// total wall time: download request -> done (extract + organize included)
+	res.Duration = totalDuration(gid, time.Since(start))
 	sendDualArchiveSummary(bot, chats, displayName, res)
 	maybeDropTorrentFile(gid)
 	maybeHandleMagnetFile(gid, displayName)
