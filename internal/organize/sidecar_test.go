@@ -132,6 +132,16 @@ func TestCleanMovieFolderName(t *testing.T) {
 		"Example.Movie.2024.1080p.WEBRip.x264.AAC5.1-DEMO.mp4": "Example Movie (2024)",
 		"Example Movie (2024)":                  "Example Movie (2024)",
 		"Sample.Film.2023.1080p.WEB-DL.mkv": "Sample Film (2023)",
+		// edition tags are stripped (post-year only)
+		"The.Fantastic.Four.First.Steps.2025.Imax.1080P.Web-Dl.Hindi.English.Msubs.MoviesMod.plus.mkv": "The Fantastic Four First Steps (2025)",
+		"Zodiac 2007 Directors Cut 1080p 10Bit HEVC BluRay Hindi VCD English ESubs - MoviesMod.One.mkv": "Zodiac (2007)",
+		"Film.2023.Directors.Cut.1080p.BluRay.mkv":   "Film (2023)",
+		"Film.2023.Director's.Cut.1080p.BluRay.mkv":  "Film (2023)",
+		"Movie.2025.Theatrical.Cut.2160p.WEB-DL.mkv": "Movie (2025)",
+		"Movie.2025.Theatrical.1080p.WEB-DL.mkv":     "Movie (2025)",
+		"Show.2024.Uncut.1080p.BluRay.mkv":           "Show (2024)",
+		// ...but genuine title words before the year survive
+		"The.Final.Cut.2004.1080p.BluRay.mkv": "The Final Cut (2004)",
 	}
 	for in, want := range cases {
 		if got := CleanMovieFolderName(in); got != want {
