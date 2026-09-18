@@ -143,6 +143,57 @@ func TestCleanMovieFolderName(t *testing.T) {
 	}
 }
 
+func TestCleanMovieFileName(t *testing.T) {
+	cases := map[string]string{
+		"Example.Movie.2024.1080p.WEBRip.x264.AAC5.1-DEMO.mp4": "Example Movie (2024).mp4",
+		"Sample.Film.2023.1080p.WEB-DL.mkv":                   "Sample Film (2023).mkv",
+		"GDN.2026.1080p.DS4K.WEB-DL.Hindi.5.1-Tamil.5.1.ESub.x264-MoviesLeech.mkv": "Gdn (2026).mkv",
+		"Inception.1080p.BluRay.mkv": "Inception.mkv",
+	}
+	for in, want := range cases {
+		if got := CleanMovieFileName(in); got != want {
+			t.Errorf("CleanMovieFileName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// Movie release dir: video gets the clean name, matching subs keep their
+// suffix, artwork/notes keep original names — all in one movie folder.
+func TestOrganizeDirectoryCleansMovieNames(t *testing.T) {
+	lib := t.TempDir()
+	src := filepath.Join(t.TempDir(), "Example.Movie.2024.1080p.WEBRip")
+	writeSidecarFile(t, filepath.Join(src, "Example.Movie.2024.1080p.WEBRip.mp4"), "video")
+	writeSidecarFile(t, filepath.Join(src, "Example.Movie.2024.1080p.WEBRip.srt"), "sub")
+	writeSidecarFile(t, filepath.Join(src, "Example.Movie.2024.1080p.WEBRip.SDH.eng.srt"), "sub2")
+	writeSidecarFile(t, filepath.Join(src, "cover.jpg"), "art")
+
+	res, err := sidecarOrganizer(lib).OrganizeDirectory(src, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Moved) != 4 {
+		t.Fatalf("expected 4 moved, got %d (%v)", len(res.Moved), res.Moved)
+	}
+	wantDir := filepath.Join(lib, "movies", "Example Movie (2024)")
+	got := map[string]bool{}
+	for _, m := range res.Moved {
+		if filepath.Dir(m) != wantDir {
+			t.Errorf("expected everything in %s, got %s", wantDir, m)
+		}
+		got[filepath.Base(m)] = true
+	}
+	for _, want := range []string{
+		"Example Movie (2024).mp4",
+		"Example Movie (2024).srt",
+		"Example Movie (2024).SDH.eng.srt",
+		"cover.jpg",
+	} {
+		if !got[want] {
+			t.Errorf("missing %q, got %v", want, got)
+		}
+	}
+}
+
 // Non-episodic torrent dir: everything lands together in one movie folder.
 func TestOrganizeDirectoryGroupsRelease(t *testing.T) {
 	lib := t.TempDir()
@@ -183,7 +234,7 @@ func TestOrganizeTorrentFileGroupsMovie(t *testing.T) {
 	if len(res.Moved) != 1 {
 		t.Fatalf("expected 1 moved, got %v", res.Moved)
 	}
-	want := filepath.Join(lib, "movies", "Sample Film (2023)", "Sample.Film.2023.1080p.WEB-DL.mkv")
+	want := filepath.Join(lib, "movies", "Sample Film (2023)", "Sample Film (2023).mkv")
 	if res.Moved[0] != want {
 		t.Errorf("got %q, want %q", res.Moved[0], want)
 	}
