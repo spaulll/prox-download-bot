@@ -134,5 +134,13 @@ func CategoryLabel(category string) string {
 }
 
 func ensureDir(path string) error {
-	return os.MkdirAll(path, 0o755)
+	if err := os.MkdirAll(path, 0o775); err != nil {
+		return err
+	}
+	// Chmod is umask-proof and repairs the ACL mask: MkdirAll alone can
+	// leave group-writable bits (and the ACL mask derived from the mode)
+	// stripped, locking companions like Jellyfin out of bot-made folders.
+	// Best effort: the directory itself is what callers need.
+	_ = os.Chmod(path, 0o775)
+	return nil
 }

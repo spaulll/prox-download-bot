@@ -209,9 +209,12 @@ func (d *Downloader) Download(rawURL string, report Reporter) (*Result, error) {
 		return nil, err
 	}
 	dir := d.Destination(info)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o775); err != nil {
 		return nil, err
 	}
+	// umask-proof group-writable bit (see organize.ensureDir): companion
+	// apps like Jellyfin must be able to write NFOs next to downloads.
+	_ = os.Chmod(dir, 0o775)
 
 	quality := d.Cfg.Quality
 	if quality == "" {

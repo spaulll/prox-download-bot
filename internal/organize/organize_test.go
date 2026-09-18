@@ -197,3 +197,19 @@ func makeDirs(root string, names ...string) error {
 	}
 	return nil
 }
+
+func TestEnsureDirIsGroupWritable(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "sub", "deep")
+	if err := ensureDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 0775 regardless of umask: companions (Jellyfin) need group write
+	// for NFOs/artwork next to bot-managed media.
+	if perm := st.Mode().Perm(); perm != 0o775 {
+		t.Errorf("ensureDir mode = %o, want 775", perm)
+	}
+}
