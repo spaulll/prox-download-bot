@@ -222,6 +222,21 @@ func CleanMovieFolderName(name string) string {
 	return title
 }
 
+// CleanMovieFileName derives a clean "Title (Year).ext" file name from a
+// release file name, keeping the year (unlike CleanEpisodeFileName):
+// "Example.Movie.2024.1080p.WEBRip.x264.mp4" becomes
+// "Example Movie (2024).mp4". Falls back to the sanitized original name
+// when no usable title remains.
+func CleanMovieFileName(filename string) string {
+	ext := filepath.Ext(filename)
+	folderRaw := CleanMovieFolderName(filename)
+	if folderRaw == "" {
+		return SanitizeFileName(filename)
+	}
+	folder := SanitizeFolderName(folderRaw)
+	return SanitizeFileName(folder + ext)
+}
+
 // CleanSeasonPackName derives a clean series folder name from a season-pack
 // archive/file name: "Mousetrap.S01.480p.x264...Msubs.RG"
 // becomes "Mousetrap".

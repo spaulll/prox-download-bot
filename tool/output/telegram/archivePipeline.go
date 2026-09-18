@@ -145,9 +145,16 @@ func runArchivePipelineDual(bot *tgBotApi.BotAPI, chats []int64, gid string, org
 		// SINGLE EPISODE — never treated as a season pack
 		live.Update("🗂 Organizing...\n\n🔍 Analyzing content\n→ Single episode detected")
 		res, err = org.OrganizeSingleEpisode(episodeFiles[0], nil)
-		// remaining non-episode files -> movies
-		for _, v := range append(otherVideos, otherFiles...) {
-			org.MoveToMovies(v)
+		// remaining non-episode files -> movies (tracked so the summary
+		// tree and size include them)
+		if err == nil && res != nil {
+			for _, v := range append(otherVideos, otherFiles...) {
+				org.MoveToMoviesInto(v, res)
+			}
+		} else {
+			for _, v := range append(otherVideos, otherFiles...) {
+				org.MoveToMovies(v)
+			}
 		}
 	default:
 		// NO EPISODES — plain archive: keep in archives/

@@ -140,7 +140,7 @@ func TestOrganizeNonEpisode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := filepath.Join(lib, "movies", "The.Legend.of.Hei.2019.1080p.BluRay.x264-WiKi.mkv")
+	want := filepath.Join(lib, "movies", "The Legend Of Hei (2019)", "The Legend Of Hei (2019).mkv")
 	if len(res.Moved) != 1 || res.Moved[0] != want {
 		t.Errorf("expected movie in movies/, got %v", res.Moved)
 	}

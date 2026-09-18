@@ -91,10 +91,10 @@ func (o *Organizer) OrganizeSeasonPack(in SeasonPackInput, report Reporter) (*Re
 	}
 	reportFn(report, Progress{Step: "moving", Detail: res.Detail, Done: total, Total: total})
 
-	// extras -> movies
+	// extras -> movies (clean Title (Year) placement for videos)
 	for _, other := range in.OtherFiles {
 		o.log("Non-episode file in pack: %s - moving to movies/", filepath.Base(other))
-		o.moveTo(other, o.Paths.Movies, res)
+		o.MoveToMoviesInto(other, res)
 	}
 
 	res.Duration = timeSince(start)

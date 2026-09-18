@@ -82,7 +82,7 @@ func (o *Organizer) OrganizeFile(srcPath string, report Reporter) (*Result, erro
 		if IsEpisode(name) {
 			o.routeEpisode(srcPath, res, report)
 		} else {
-			o.moveTo(srcPath, o.Paths.Movies, res)
+			o.placeMovie(srcPath, res)
 		}
 	case CatArchives:
 		// handled by the extract pipeline (Phase 3); default keep in archives
@@ -234,9 +234,26 @@ func (o *Organizer) organizeReleaseGroup(dir string, files []string, report Repo
 		return res, nil
 	}
 	total := len(files)
-	for i, f := range files {
-		reportFn(report, Progress{Step: "moving", Detail: "Analyzing content", Done: i, Total: total})
-		o.moveFile(f, filepath.Join(destDir, filepath.Base(f)), res)
+	if primary == CatMovies {
+		// movie group: clean video file names to "Title (Year).ext" and
+		// keep matching sidecars next to them (suffix preserved, e.g.
+		// "Title (Year).SDH.eng.srt"); artwork/notes keep original names.
+		cleanedByVideo := map[string]string{}
+		for _, f := range files {
+			base := filepath.Base(f)
+			if IsVideo(base) {
+				cleanedByVideo[f] = CleanMovieFileName(base)
+			}
+		}
+		for i, f := range files {
+			reportFn(report, Progress{Step: "moving", Detail: "Analyzing content", Done: i, Total: total})
+			o.moveMovieGroupFile(f, destDir, cleanedByVideo, res)
+		}
+	} else {
+		for i, f := range files {
+			reportFn(report, Progress{Step: "moving", Detail: "Analyzing content", Done: i, Total: total})
+			o.moveFile(f, filepath.Join(destDir, filepath.Base(f)), res)
+		}
 	}
 	if c := filepath.Clean(dir); c != "/" && c != "." && c != "" {
 		_ = os.RemoveAll(dir)
@@ -282,7 +299,10 @@ func (o *Organizer) OrganizeTorrentFile(srcPath, torrentName string, report Repo
 		return r, err
 	}
 	reportFn(report, Progress{Step: "moving", Detail: "Analyzing content", Done: 0, Total: 1})
-	o.moveFile(srcPath, filepath.Join(destDir, name), res)
+	// clean the file name so Movies/<Title (Year)>/ holds
+	// "<Title (Year)>.ext" instead of the full release name
+	cleanName := SanitizeFileName(SanitizeFolderName(folder) + filepath.Ext(name))
+	o.moveFile(srcPath, filepath.Join(destDir, cleanName), res)
 	res.Category = category
 	res.Duration = time.Since(start)
 	return res, nil
@@ -331,11 +351,93 @@ func (o *Organizer) routeFile(f string, res *Result) {
 		if IsEpisode(filepath.Base(f)) {
 			o.routeEpisode(f, res, nil)
 		} else {
-			o.moveTo(f, o.Paths.Movies, res)
+			o.placeMovie(f, res)
 		}
 	default:
 		o.moveTo(f, o.Paths.dirFor(Categorize(ext)), res)
 	}
+}
+
+// placeMovie moves a single movie file into its own clean folder with a
+// clean file name: Movies/Title (Year)/Title (Year).ext. Falls back to the
+// old flat placement when no usable title can be derived.
+func (o *Organizer) placeMovie(srcPath string, res *Result) {
+	name := filepath.Base(srcPath)
+	folderRaw := CleanMovieFolderName(name)
+	if folderRaw == "" || o.Paths.Movies == "" {
+		o.moveTo(srcPath, o.Paths.Movies, res)
+		return
+	}
+	folder := SanitizeFolderName(folderRaw)
+	destDir := filepath.Join(o.Paths.Movies, folder)
+	if err := ensureDir(destDir); err != nil {
+		o.moveTo(srcPath, o.Paths.Movies, res)
+		return
+	}
+	o.moveFile(srcPath, filepath.Join(destDir, SanitizeFileName(folder+filepath.Ext(name))), res)
+}
+
+// moveMovieGroupFile moves one file of a movie release group into destDir:
+// videos get the clean "Title (Year).ext" name, matching sidecars keep
+// their suffix (e.g. "Title (Year).SDH.eng.srt"), everything else keeps
+// its original name. cleanedByVideo maps source video path -> clean name.
+func (o *Organizer) moveMovieGroupFile(srcPath, destDir string, cleanedByVideo map[string]string, res *Result) {
+	base := filepath.Base(srcPath)
+	if IsVideo(base) {
+		if clean, ok := cleanedByVideo[srcPath]; ok && clean != "" {
+			o.moveFile(srcPath, filepath.Join(destDir, clean), res)
+			return
+		}
+		if clean := CleanMovieFileName(base); clean != "" {
+			o.moveFile(srcPath, filepath.Join(destDir, clean), res)
+			return
+		}
+	}
+	if IsSidecar(base) {
+		if clean := cleanedMovieSidecarName(base, cleanedByVideo); clean != "" {
+			o.moveFile(srcPath, filepath.Join(destDir, clean), res)
+			return
+		}
+	}
+	o.moveFile(srcPath, filepath.Join(destDir, base), res)
+}
+
+// cleanedMovieSidecarName maps a sidecar onto its video's clean base name,
+// preserving any trailing tags (e.g. "Movie.2024.1080p.SDH.eng.srt" with
+// video "Movie.2024.1080p.mp4" -> "Movie (2024).SDH.eng.srt"). Returns ""
+// when the sidecar does not share a video basename prefix (caller keeps
+// the original name so artwork/notes are never clobbered).
+func cleanedMovieSidecarName(sidecarBase string, cleanedByVideo map[string]string) string {
+	ext := filepath.Ext(sidecarBase)
+	noExt := strings.TrimSuffix(sidecarBase, ext)
+	lowerNoExt := strings.ToLower(noExt)
+	bestClean, bestLen := "", -1
+	for srcVideo, cleanVideo := range cleanedByVideo {
+		vBase := strings.TrimSuffix(filepath.Base(srcVideo), filepath.Ext(filepath.Base(srcVideo)))
+		lowerV := strings.ToLower(vBase)
+		var suffix string
+		switch {
+		case lowerNoExt == lowerV:
+			suffix = ""
+		case strings.HasPrefix(lowerNoExt, lowerV) && len(noExt) > len(vBase):
+			sep := noExt[len(vBase):][0]
+			if sep == '.' || sep == '-' || sep == '_' || sep == ' ' {
+				suffix = noExt[len(vBase):]
+			} else {
+				continue
+			}
+		default:
+			continue
+		}
+		cleanBase := strings.TrimSuffix(cleanVideo, filepath.Ext(cleanVideo))
+		if len(vBase) > bestLen {
+			bestClean, bestLen = cleanBase+suffix+ext, len(vBase)
+		}
+	}
+	if bestClean == "" {
+		return ""
+	}
+	return SanitizeFileName(bestClean)
 }
 
 // routeEpisode places an episode file into series/ or anime/ with Season N.
@@ -527,8 +629,23 @@ func reportFn(r Reporter, p Progress) {
 }
 
 // MoveToMovies moves any file into the movies category (public helper).
+// Single video files get the clean Movies/Title (Year)/Title (Year).ext
+// placement; everything else keeps its original name in the movies root.
 func (o *Organizer) MoveToMovies(srcPath string) {
-	o.moveTo(srcPath, o.Paths.Movies, &Result{})
+	o.MoveToMoviesInto(srcPath, &Result{})
+}
+
+// MoveToMoviesInto is MoveToMovies that records the move in res so callers
+// can include leftover files in their summary.
+func (o *Organizer) MoveToMoviesInto(srcPath string, res *Result) {
+	if res == nil {
+		res = &Result{}
+	}
+	if IsVideo(filepath.Base(srcPath)) && !IsEpisode(filepath.Base(srcPath)) {
+		o.placeMovie(srcPath, res)
+		return
+	}
+	o.moveTo(srcPath, o.Paths.Movies, res)
 }
 
 // MoveToArchives moves the archive file into the archives category.
