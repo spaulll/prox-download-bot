@@ -2,6 +2,27 @@
 
 All notable changes to this project are documented in this file.
 
+## v0.5.0 - 2026-10-02
+
+### Added
+- Clean movie folder/file names to `Title (Year)` form.
+- Strip edition tags (IMAX, director's cut, etc.) from movie names.
+- Final summaries show total download-to-done time (download + extract +
+  organize), not just the organize step.
+
+### Fixed
+- Series/anime archives are now deleted after successful extract + organize
+  instead of piling up 8-9 GB duplicates in `archives/`. Other categories
+  still respect `organize.deleteArchive`.
+- **❌ Remove task** now deletes the partial files and `.aria2` control files
+  from the download folder and clears the aria2 stopped entry. The task
+  record is forgotten so it no longer lingers.
+- "Download stopped" notice no longer shows raw
+  `Download stopped!%!(EXTRA []rpc.Event=...)` formatting — it shows the
+  plain message plus the task name.
+- Library directories are created group-writable so companions like Jellyfin
+  can write NFOs/artwork next to bot-managed files.
+
 ## v0.4.0 - 2026-09-14
 
 ### Added
