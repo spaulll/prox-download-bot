@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented in this file.
 
+## v0.5.2 - 2026-10-02
+
+### Fixed
+- `.aria2` control files sometimes survived task removal: aria2 can flush
+  its control file after `forceRemove` returns, winning the race against the
+  immediate delete. Removal now logs the outcome and re-sweeps lingering
+  `.aria2` files once after 5s (skipped when the main target exists again,
+  e.g. the same link was re-added).
+- Stop notices for links with opaque URL basenames (e.g. googleusercontent)
+  now show aria2's real filename (Content-Disposition aware, same as the
+  remove picker): the filename is snapshotted at remove-press time, when RPC
+  is safe, instead of relying on the URL.
+
 ## v0.5.1 - 2026-10-02
 
 ### Fixed

@@ -680,6 +680,36 @@ func dropStartedNotice(gid string) {
 	}
 }
 
+// realNames caches gid -> on-disk display name resolved via RPC at moments
+// when RPC is safe (never inside notifier callbacks). Reads are safe
+// anywhere, including notifiers. Populated at remove-press time so the stop
+// notice can show aria2's real filename (which honors Content-Disposition)
+// after the download — and its RPC status — is gone.
+var realNames sync.Map // gid -> string
+
+// rememberRealName snapshots aria2's current filename for gid. Best-effort:
+// failures leave the task-store fallback in place. Must NOT be called from
+// notifier callbacks (use the cached value there via displayNameForGid).
+func rememberRealName(gid string) {
+	if gid == "" {
+		return
+	}
+	st, err := input.ToolApp.Aria2.TellStatusFull(gid)
+	if err != nil {
+		return
+	}
+	name := ""
+	if st.BitTorrent.Info.Name != "" {
+		name = st.BitTorrent.Info.Name
+	} else if len(st.Files) > 0 && st.Files[0].Path != "" {
+		parts := strings.Split(st.Files[0].Path, "/")
+		name = parts[len(parts)-1]
+	}
+	if name != "" {
+		realNames.Store(gid, name)
+	}
+}
+
 // displayNameForGid resolves a human-readable name for a gid from the task
 // store only. It must NEVER do RPC: notifier callbacks run synchronously on
 // the aria2 websocket recv goroutine, so a synchronous RPC here deadlocks
@@ -689,6 +719,11 @@ func dropStartedNotice(gid string) {
 func displayNameForGid(gid string) string {
 	if gid == "" {
 		return ""
+	}
+	if v, ok := realNames.Load(gid); ok {
+		if s, _ := v.(string); s != "" {
+			return s
+		}
 	}
 	if taskStore != nil {
 		if t, ok := taskStore.Get(gid); ok {
@@ -774,6 +809,7 @@ func (Notifier) OnDownloadStop(events []rpc.Event) {
 		if taskStore != nil {
 			taskStore.Remove(gid)
 		}
+		realNames.Delete(gid)
 	} else {
 		logger.Info("Download stopped")
 		SuddenMessageChan <- suddenMsg{Text: base}

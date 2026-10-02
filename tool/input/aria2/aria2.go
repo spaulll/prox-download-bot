@@ -779,7 +779,23 @@ func (a Aria2) ForceRemove(gid string) {
 			logger.Info("ForceRemove %s: deleted %s", gid, t)
 		}
 		// aria2 control file next to single-file downloads
-		_ = os.Remove(t + ".aria2")
+		if err := os.Remove(t + ".aria2"); err != nil && !os.IsNotExist(err) {
+			logger.Error("ForceRemove %s: control file cleanup failed for %s.aria2: %v", gid, t, err)
+		}
+		// aria2 can flush its control file AFTER forceRemove returns, so an
+		// immediate delete loses the race. Sweep once more after a delay.
+		// Only the .aria2 is swept (never the main target: it may belong to
+		// a fresh download if the user re-added the same link), and only
+		// when the main target is still absent.
+		go func(target string) {
+			time.Sleep(5 * time.Second)
+			if _, err := os.Stat(target); err == nil {
+				return // target exists again — leave it (and its .aria2) alone
+			}
+			if err := os.Remove(target + ".aria2"); err == nil {
+				logger.Info("ForceRemove %s: swept lingering control file %s.aria2", gid, target)
+			}
+		}(t)
 	}
 	// drop the stopped entry so "Finished/Stopped" history does not fill up
 	_, _ = aria2Rpc.RemoveDownloadResult(gid)

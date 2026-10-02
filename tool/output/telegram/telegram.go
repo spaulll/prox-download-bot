@@ -586,6 +586,9 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 					bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, i18nLoc.LocText("taskNowRemove")))
 					refreshRemovePicker(bot, update, clicker)
 				} else {
+					// snapshot aria2's real filename (Content-Disposition
+					// aware) before removal so the stop notice shows it
+					rememberRealName(task[0])
 					input.ForceRemoveTask(task[0])
 					bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, i18nLoc.LocText("taskNowRemove")))
 				}
