@@ -678,13 +678,44 @@ func dropStartedNotice(gid string) {
 	}
 }
 
+// displayNameForGid resolves a human-readable name for a gid without ever
+// leaking Go struct formatting into Telegram messages. RPC first, then the
+// task store, then the raw gid as a last resort.
+func displayNameForGid(gid string) string {
+	if gid == "" {
+		return ""
+	}
+	if st, err := input.ToolApp.Aria2.TellStatusFull(gid); err == nil {
+		if st.BitTorrent.Info.Name != "" {
+			return st.BitTorrent.Info.Name
+		}
+		for _, f := range st.Files {
+			if f.Path != "" {
+				parts := strings.Split(f.Path, "/")
+				return parts[len(parts)-1]
+			}
+		}
+	}
+	if taskStore != nil {
+		if t, ok := taskStore.Get(gid); ok {
+			if t.Name != "" {
+				return t.Name
+			}
+			if t.Link != "" {
+				return t.Link
+			}
+		}
+	}
+	return gid
+}
+
 // OnDownloadStart will be sent when a download is started. The event is of type struct, and it contains following keys. The value type is string.
 func (Notifier) OnDownloadStart(events []rpc.Event) {
-	logger.Info(i18nLoc.LocText("onDownloadStartDes"), events)
-
 	if len(events) > 0 {
 		gid := events[0].Gid
-		SuddenMessageChan <- suddenMsg{GID: gid, Text: fmt.Sprintf(i18nLoc.LocText("onDownloadStartDes"), events)}
+		name := displayNameForGid(gid)
+		logger.Info("%s Download started!", name)
+		SuddenMessageChan <- suddenMsg{GID: gid, Text: fmt.Sprintf(i18nLoc.LocText("onDownloadStartDes"), name)}
 		aria2.TMMessageChan <- gid
 		// show the live progress view automatically, no button press needed
 		go autoShowProgress(gid)
@@ -719,59 +750,74 @@ func autoShowProgress(gid string) {
 
 // OnDownloadPause will be sent when a download is paused. The event is the same struct as the event argument of onDownloadStart() method.
 func (Notifier) OnDownloadPause(events []rpc.Event) {
-	logger.Info(i18nLoc.LocText("onDownloadPauseDes"), events)
 	if len(events) > 0 && aria2.TakeAutoPaused(events[0].Gid) {
 		// picker auto-pause for file selection, not a user action - no noise
 		return
 	}
 	if len(events) > 0 {
-		SuddenMessageChan <- suddenMsg{GID: events[0].Gid, Text: fmt.Sprintf(i18nLoc.LocText("onDownloadPauseDes"), events)}
+		name := displayNameForGid(events[0].Gid)
+		logger.Info("%s Download paused!", name)
+		SuddenMessageChan <- suddenMsg{GID: events[0].Gid, Text: fmt.Sprintf(i18nLoc.LocText("onDownloadPauseDes"), name)}
 	} else {
-		SuddenMessageChan <- suddenMsg{Text: fmt.Sprintf(i18nLoc.LocText("onDownloadPauseDes"), events)}
+		SuddenMessageChan <- suddenMsg{Text: i18nLoc.LocText("onDownloadPauseDes")}
 	}
 }
 
 // OnDownloadStop will be sent when a download is stopped by the user. The event is the same struct as the event argument of onDownloadStart() method.
 func (Notifier) OnDownloadStop(events []rpc.Event) {
-	logger.Info(i18nLoc.LocText("onDownloadStopDes"), events)
+	base := i18nLoc.LocText("onDownloadStopDes")
 	if len(events) > 0 {
-		SuddenMessageChan <- suddenMsg{GID: events[0].Gid, Text: fmt.Sprintf(i18nLoc.LocText("onDownloadStopDes"), events)}
+		gid := events[0].Gid
+		name := displayNameForGid(gid)
+		logger.Info("Download stopped: %s (%s)", name, gid)
+		text := base
+		if name != "" && name != gid {
+			text += "\n\n" + name
+		}
+		SuddenMessageChan <- suddenMsg{GID: gid, Text: text}
+		dropStartedNotice(gid)
+		// forget the task record: files were already deleted by ForceRemove
+		if taskStore != nil {
+			taskStore.Remove(gid)
+		}
 	} else {
-		SuddenMessageChan <- suddenMsg{Text: fmt.Sprintf(i18nLoc.LocText("onDownloadStopDes"), events)}
-	}
-	if len(events) > 0 {
-		dropStartedNotice(events[0].Gid)
+		logger.Info("Download stopped")
+		SuddenMessageChan <- suddenMsg{Text: base}
 	}
 }
 
 // OnDownloadComplete will be sent when a download is complete. For BitTorrent downloads, this notification is sent when the download is complete and seeding is over. The event is the same struct of the event argument of onDownloadStart() method.
 func (Notifier) OnDownloadComplete(events []rpc.Event) {
-	logger.Info(i18nLoc.LocText("onDownloadCompleteDes"), events)
 	if len(events) > 0 {
+		logger.Info("%s Download completed!", displayNameForGid(events[0].Gid))
 		aria2.MarkFinished(events[0].Gid)
 		dropStartedNotice(events[0].Gid)
+	} else {
+		logger.Info("Download completed")
 	}
 	handleDownloadComplete(events)
 }
 
 // OnDownloadError will be sent when a download is stopped due to an error. The event is the same struct as the event argument of onDownloadStart() method.
 func (Notifier) OnDownloadError(events []rpc.Event) {
-	logger.Info(i18nLoc.LocText("onDownloadErrorDes"), events)
 	if len(events) > 0 {
-		SuddenMessageChan <- suddenMsg{GID: events[0].Gid, Text: fmt.Sprintf(i18nLoc.LocText("onDownloadErrorDes"), events)}
-	} else {
-		SuddenMessageChan <- suddenMsg{Text: fmt.Sprintf(i18nLoc.LocText("onDownloadErrorDes"), events)}
-	}
-	if len(events) > 0 {
+		name := displayNameForGid(events[0].Gid)
+		logger.Info("%s Download error!", name)
+		SuddenMessageChan <- suddenMsg{GID: events[0].Gid, Text: fmt.Sprintf(i18nLoc.LocText("onDownloadErrorDes"), name)}
 		dropStartedNotice(events[0].Gid)
+	} else {
+		logger.Info("Download error")
+		SuddenMessageChan <- suddenMsg{Text: i18nLoc.LocText("onDownloadErrorDes")}
 	}
 }
 
 // OnBtDownloadComplete will be sent when a torrent download is complete but seeding is still going on. The event is the same struct as the event argument of onDownloadStart() method.
 func (Notifier) OnBtDownloadComplete(events []rpc.Event) {
-	logger.Info(i18nLoc.LocText("onBtDownloadCompleteDes"), events)
 	if len(events) > 0 {
+		logger.Info("BT %s Download completed!", displayNameForGid(events[0].Gid))
 		aria2.MarkFinished(events[0].Gid)
 		dropStartedNotice(events[0].Gid)
+	} else {
+		logger.Info("BT Download completed")
 	}
 }

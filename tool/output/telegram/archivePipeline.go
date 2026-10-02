@@ -178,10 +178,15 @@ func runArchivePipelineDual(bot *tgBotApi.BotAPI, chats []int64, gid string, org
 	}
 
 	// delete original archive (config) or move to archives/
-	if cfg.DeleteArchive {
+	// Shows (series/anime) are always deleted after a successful organize:
+	// the content already lives in series/anime, keeping an 8-9GB duplicate
+	// in archives/ only wastes NAS. Other categories respect deleteArchive.
+	if cfg.DeleteArchive || res.Category == organize.CatSeries || res.Category == organize.CatAnime {
 		if err := os.Remove(srcPath); err != nil {
 			logger.Error("failed to delete archive %s: %v", srcPath, err)
 		}
+		// aria2 leaves a .aria2 control file next to completed downloads
+		_ = os.Remove(srcPath + ".aria2")
 	} else {
 		org.MoveToArchives(srcPath)
 	}
