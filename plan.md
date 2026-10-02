@@ -342,10 +342,10 @@ Series
 **Goal:** Warn before re-downloading, never hard-block (quality upgrades are legit).
 
 ### Todo
-- [ ] Same URL/infohash already active → instant warn
-- [ ] Normalized show+season / episode / movie already in library → confirm prompt with override buttons
-- [ ] Opaque links (e.g. googleusercontent): deferred check after start, pause + prompt
-- [ ] Unit tests + commit: `feat: duplicate guard`
+- [x] Same URL/infohash already active → instant warn
+- [x] Normalized show+season / episode / movie already in library → confirm prompt with override buttons
+- [x] Opaque links (e.g. googleusercontent): deferred check after start, pause + prompt
+- [x] Unit tests + commit: `feat: duplicate guard`
 
 ---
 
