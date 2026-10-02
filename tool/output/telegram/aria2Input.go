@@ -664,7 +664,9 @@ func rememberStartedNotice(gid string, chatID int64, msgID int) {
 }
 
 // dropStartedNotice removes the "Download started!" notices of a finished task
-// from every chat that received them.
+// from every chat that received them. The deletes run async: this is called
+// from aria2 notifier callbacks on the websocket recv goroutine, and slow
+// Telegram I/O must never block that loop (all RPC responses stall with it).
 func dropStartedNotice(gid string) {
 	if gid == "" {
 		return
@@ -674,27 +676,19 @@ func dropStartedNotice(gid string) {
 	delete(startedNotices, gid)
 	startedNoticesMu.Unlock()
 	if ok {
-		deleteChatMsgs(activeBot, msgs)
+		go deleteChatMsgs(activeBot, msgs)
 	}
 }
 
-// displayNameForGid resolves a human-readable name for a gid without ever
-// leaking Go struct formatting into Telegram messages. RPC first, then the
-// task store, then the raw gid as a last resort.
+// displayNameForGid resolves a human-readable name for a gid from the task
+// store only. It must NEVER do RPC: notifier callbacks run synchronously on
+// the aria2 websocket recv goroutine, so a synchronous RPC here deadlocks
+// until the 30s call timeout — stalling every other RPC response and
+// notification (and starving ForceRemove's TellStatus so files are never
+// deleted). Names are recorded at add-time instead (see shortDisplayName).
 func displayNameForGid(gid string) string {
 	if gid == "" {
 		return ""
-	}
-	if st, err := input.ToolApp.Aria2.TellStatusFull(gid); err == nil {
-		if st.BitTorrent.Info.Name != "" {
-			return st.BitTorrent.Info.Name
-		}
-		for _, f := range st.Files {
-			if f.Path != "" {
-				parts := strings.Split(f.Path, "/")
-				return parts[len(parts)-1]
-			}
-		}
 	}
 	if taskStore != nil {
 		if t, ok := taskStore.Get(gid); ok {

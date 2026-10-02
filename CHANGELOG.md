@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## v0.5.1 - 2026-10-02
+
+### Fixed
+- **Slow responses after v0.5.0 (~30s gaps)**: v0.5.0 resolved display names
+  with a synchronous aria2 RPC inside notifier callbacks, which run on the
+  websocket recv loop — a self-deadlock that only cleared on the 30s RPC
+  timeout, stalling every other response. Names are now recorded at task
+  add-time (URL basename / magnet `dn=`), so notifiers never block on RPC.
+- **Remove-task leftovers**: the same deadlock starved `ForceRemove`'s
+  pre-removal path lookup, so partial files and `.aria2` control files were
+  never deleted. Removal now logs resolved targets and failures.
+- "Download started/stopped" notices show the short task name instead of the
+  full link or raw event formatting.
+
 ## v0.5.0 - 2026-10-02
 
 ### Added

@@ -14,6 +14,7 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -373,6 +374,35 @@ func refreshRemovePicker(bot *tgBotApi.BotAPI, update tgBotApi.Update, clicker i
 	if _, err := bot.Send(edit); err != nil {
 		logger.Debug("refresh remove picker failed: %v", err)
 	}
+}
+
+// shortDisplayName derives a compact human-readable name from a download
+// link for task records, so sudden messages can show it without any RPC
+// (notifier callbacks must never block on RPC — see displayNameForGid).
+// Direct links yield the URL path basename; magnets yield the dn= param.
+func shortDisplayName(link string) string {
+	s := strings.TrimSpace(link)
+	if s == "" {
+		return s
+	}
+	if idx := strings.Index(s, "magnet:?"); idx >= 0 {
+		if q, err := url.ParseQuery(s[idx+8:]); err == nil {
+			if dn := strings.TrimSpace(q.Get("dn")); dn != "" {
+				return dn
+			}
+		}
+		return "magnet"
+	}
+	if i := strings.IndexAny(s, "?#"); i >= 0 {
+		s = s[:i]
+	}
+	if i := strings.LastIndex(s, "/"); i >= 0 {
+		s = s[i+1:]
+	}
+	if s == "" {
+		return strings.TrimSpace(link)
+	}
+	return s
 }
 
 // buildRemovePicker builds the combined remove picker (aria2 active/waiting
@@ -827,6 +857,7 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 								UserID: senderID,
 								ChatID: update.Message.Chat.ID,
 								Link:   text,
+								Name:   shortDisplayName(text),
 								Engine: "aria2",
 								Status: "downloading",
 							})
@@ -856,6 +887,7 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 									UserID: senderID,
 									ChatID: update.Message.Chat.ID,
 									Link:   doc.FileName,
+									Name:   doc.FileName,
 									Engine: "aria2",
 									Status: "downloading",
 								})

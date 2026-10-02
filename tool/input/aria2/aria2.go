@@ -766,10 +766,17 @@ func (a Aria2) ForceRemove(gid string) {
 	} else {
 		logger.Error("ForceRemove TellStatus failed for %s: %v", gid, err)
 	}
-	_, _ = aria2Rpc.ForceRemove(gid)
+	if _, err := aria2Rpc.ForceRemove(gid); err != nil {
+		logger.Error("ForceRemove RPC failed for %s: %v", gid, err)
+	}
+	if len(targets) == 0 {
+		logger.Error("ForceRemove %s: no on-disk targets resolved, nothing to delete", gid)
+	}
 	for _, t := range targets {
 		if err := os.RemoveAll(t); err != nil {
 			logger.Error("ForceRemove cleanup failed for %s: %v", t, err)
+		} else {
+			logger.Info("ForceRemove %s: deleted %s", gid, t)
 		}
 		// aria2 control file next to single-file downloads
 		_ = os.Remove(t + ".aria2")
