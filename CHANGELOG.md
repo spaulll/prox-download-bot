@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## v0.5.3 - 2026-10-02
+
+### Fixed
+- "Download started/paused/error" notices no longer show the opaque URL
+  basename for links like googleusercontent (at that point headers may not
+  have arrived, so the real filename is unknowable): they are plain one-line
+  notices again. The live progress view right after still shows the real
+  filename, and stop notices keep the real name snapshotted at remove time.
+
 ## v0.5.2 - 2026-10-02
 
 ### Fixed

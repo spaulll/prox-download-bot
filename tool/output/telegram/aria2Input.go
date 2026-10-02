@@ -130,6 +130,7 @@ func Aria2TMSelectMsg(bot *tgBotApi.BotAPI) {
 			} else if b[1] == "cancel" {
 				deletePickerMsgs()
 				resetPicker()
+				rememberRealName(gid)
 				input.ToolApp.Aria2.ForceRemove(gid)
 				continue
 			}
@@ -634,10 +635,11 @@ func generateGoTree(m map[string]interface{}, index int, selectFileList *[][2]in
 type Notifier struct {
 }
 
-// startedNoticeSuffix is the localized tail of a "Download started!" notice.
-// Computed lazily - the localizer is not ready during package init.
+// startedNoticeSuffix is the full text of a "Download started!" notice,
+// used to recognize our own notices for later deletion. Computed lazily -
+// the localizer is not ready during package init.
 func startedNoticeSuffix() string {
-	return strings.TrimPrefix(i18nLoc.LocText("onDownloadStartDes"), "%s")
+	return i18nLoc.LocText("onDownloadStartDes")
 }
 
 // startedNotices maps gid -> per-chat message ids of its "Download started!"
@@ -742,9 +744,11 @@ func displayNameForGid(gid string) string {
 func (Notifier) OnDownloadStart(events []rpc.Event) {
 	if len(events) > 0 {
 		gid := events[0].Gid
-		name := displayNameForGid(gid)
-		logger.Info("%s Download started!", name)
-		SuddenMessageChan <- suddenMsg{GID: gid, Text: fmt.Sprintf(i18nLoc.LocText("onDownloadStartDes"), name)}
+		logger.Info("Download started: %s", gid)
+		// plain notice on purpose: at start time headers may not have
+		// arrived yet, so aria2 often only knows the opaque URL basename.
+		// The live progress view that follows shows the real filename.
+		SuddenMessageChan <- suddenMsg{GID: gid, Text: i18nLoc.LocText("onDownloadStartDes")}
 		aria2.TMMessageChan <- gid
 		// show the live progress view automatically, no button press needed
 		go autoShowProgress(gid)
@@ -784,9 +788,8 @@ func (Notifier) OnDownloadPause(events []rpc.Event) {
 		return
 	}
 	if len(events) > 0 {
-		name := displayNameForGid(events[0].Gid)
-		logger.Info("%s Download paused!", name)
-		SuddenMessageChan <- suddenMsg{GID: events[0].Gid, Text: fmt.Sprintf(i18nLoc.LocText("onDownloadPauseDes"), name)}
+		logger.Info("Download paused: %s", events[0].Gid)
+		SuddenMessageChan <- suddenMsg{GID: events[0].Gid, Text: i18nLoc.LocText("onDownloadPauseDes")}
 	} else {
 		SuddenMessageChan <- suddenMsg{Text: i18nLoc.LocText("onDownloadPauseDes")}
 	}
@@ -831,9 +834,8 @@ func (Notifier) OnDownloadComplete(events []rpc.Event) {
 // OnDownloadError will be sent when a download is stopped due to an error. The event is the same struct as the event argument of onDownloadStart() method.
 func (Notifier) OnDownloadError(events []rpc.Event) {
 	if len(events) > 0 {
-		name := displayNameForGid(events[0].Gid)
-		logger.Info("%s Download error!", name)
-		SuddenMessageChan <- suddenMsg{GID: events[0].Gid, Text: fmt.Sprintf(i18nLoc.LocText("onDownloadErrorDes"), name)}
+		logger.Info("Download error: %s", events[0].Gid)
+		SuddenMessageChan <- suddenMsg{GID: events[0].Gid, Text: i18nLoc.LocText("onDownloadErrorDes")}
 		dropStartedNotice(events[0].Gid)
 	} else {
 		logger.Info("Download error")
