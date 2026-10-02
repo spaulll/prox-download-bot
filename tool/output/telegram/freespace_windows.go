@@ -7,3 +7,8 @@ package telegram
 func hasFreeSpace(path string, need int64) bool {
 	return true
 }
+
+// freeSpaceBytes is unsupported on Windows: always unknown (fail-open).
+func freeSpaceBytes(path string) (int64, bool) {
+	return 0, false
+}

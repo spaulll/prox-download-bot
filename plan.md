@@ -316,6 +316,39 @@ Series
 
 ---
 
+## Phase 7 – Disk Guard (add-time space check)
+**Goal:** Refuse hopeless downloads up front instead of failing mid-way.
+
+### Todo
+- [x] HEAD-based size probe for http(s) links (short timeout, fail-open on unknown size)
+- [x] Refuse with clear message when size is known and free space can't hold it
+- [x] Magnets/torrents (unknown size) always allowed
+- [x] Unit tests with httptest + commit: `feat: disk guard`
+
+---
+
+## Phase 8 – Orphan Sweeper (stale download debris)
+**Goal:** Leftovers never accumulate silently again.
+
+### Todo
+- [ ] Startup + hourly sweep of the download folder only
+- [ ] Delete `*.aria2` + base files with no referencing aria2 task and older than grace period
+- [ ] Never touch: download root itself, fresh files, recovery-pending completes
+- [ ] Log every decision + commit: `feat: orphan sweeper`
+
+---
+
+## Phase 9 – Duplicate Guard (already have it?)
+**Goal:** Warn before re-downloading, never hard-block (quality upgrades are legit).
+
+### Todo
+- [ ] Same URL/infohash already active → instant warn
+- [ ] Normalized show+season / episode / movie already in library → confirm prompt with override buttons
+- [ ] Opaque links (e.g. googleusercontent): deferred check after start, pause + prompt
+- [ ] Unit tests + commit: `feat: duplicate guard`
+
+---
+
 ## Working Rules
 - Update this PLAN.md todos after every completed task
 - Short commits with clear keywords (`feat:`, `fix:`, `chore:`, `refactor:`)

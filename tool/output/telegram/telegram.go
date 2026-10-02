@@ -853,6 +853,10 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 						notifyUserAdded(senderID, senderUsername, text)
 						go startYtdlpDownload(bot, update.Message.Chat.ID, text, ytGID)
 					case isDownloadable(text):
+						if refusal := diskGuardError(text); refusal != "" {
+							msg.Text = refusal
+							break
+						}
 						gid, ok := input.ToolApp.Aria2.Download(text)
 						if ok {
 							taskStore.Add(users.Task{

@@ -47,7 +47,7 @@
   "doNotHavePermissionControl": "You do not have permission to control this Bot",
   "inLocal": "The server you are currently controlling is local, and you can control server files",
   "removeDownloadFolderFiles": "Delete files from the download folder",
-  "tmMode1": "Select the largest files",
+  "diskGuardNoSpace": "⚠️ Not enough disk space\n%s (%s)\nFree: %s\nFree up space and try again.",  "tmMode1": "Select the largest files",
   "tmMode2": "Smart select the larger files",
   "onDownloadStartDes": "Download started!",
   "onDownloadPauseDes": "Download paused!",
