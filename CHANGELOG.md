@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented in this file.
 
+## v0.6.0 - 2026-10-03
+
+### Added
+- **Disk guard**: links whose size is known via HEAD are refused up front
+  with `⚠️ Not enough disk space` when they provably don't fit the download
+  filesystem. Unknown sizes (magnets, torrents) always allowed.
+- **Orphan sweeper**: startup + hourly scan of the download folder deletes
+  stale `*.aria2` debris and their partials (no referencing task, older than
+  30 min). Directories, lone data files, and anything live are never touched.
+- **Duplicate guard**: warns before re-downloading — same link already active,
+  or normalized show+season / episode / movie already in the library — with
+  override buttons (never blocks: quality upgrades are legit). Opaque links
+  (e.g. googleusercontent) are re-checked once the real filename arrives;
+  on a hit the download pauses and asks to keep or stop+delete.
+
 ## v0.5.3 - 2026-10-02
 
 ### Fixed
