@@ -728,6 +728,32 @@ func (a Aria2) Unpause(gid string) {
 	aria2Rpc.Unpause(gid)
 }
 
+// topEntry maps an aria2 file path to the top-level entry under the download
+// folder (the unit ForceRemove deletes and the orphan sweeper compares).
+// Returns false for empty paths and for the download root itself (never
+// delete that).
+func topEntry(filePath, downloadFolder string) (string, bool) {
+	p := filepath.Clean(filePath)
+	if p == "" || p == "." {
+		return "", false
+	}
+	dl := filepath.Clean(downloadFolder)
+	if dl != "" && dl != "." && strings.HasPrefix(p, dl+string(filepath.Separator)) {
+		rel, err := filepath.Rel(dl, p)
+		if err != nil || rel == "." || rel == "" {
+			return "", false
+		}
+		if top := strings.SplitN(rel, string(filepath.Separator), 2)[0]; top != "" {
+			return filepath.Join(dl, top), true
+		}
+		return "", false
+	}
+	if p == dl {
+		return "", false
+	}
+	return p, true
+}
+
 func (a Aria2) ForceRemove(gid string) {
 	// Capture on-disk paths BEFORE removal: after ForceRemove TellStatus
 	// may fail and the paths would be lost, leaving partial files + .aria2
@@ -735,27 +761,10 @@ func (a Aria2) ForceRemove(gid string) {
 	var targets []string
 	if info, err := aria2Rpc.TellStatus(gid); err == nil {
 		seen := map[string]bool{}
-		dl := filepath.Clean(config.GetDownloadFolder())
+		dl := config.GetDownloadFolder()
 		for _, f := range info.Files {
-			p := filepath.Clean(f.Path)
-			if p == "" || p == "." {
-				continue
-			}
-			var target string
-			if dl != "" && dl != "." && strings.HasPrefix(p, dl+string(filepath.Separator)) {
-				rel, rerr := filepath.Rel(dl, p)
-				if rerr != nil || rel == "." || rel == "" {
-					continue
-				}
-				top := strings.SplitN(rel, string(filepath.Separator), 2)[0]
-				if top == "" {
-					continue
-				}
-				target = filepath.Join(dl, top)
-			} else if p != dl {
-				target = p
-			} else {
-				// safety: never delete the download root itself
+			target, ok := topEntry(f.Path, dl)
+			if !ok {
 				continue
 			}
 			if !seen[target] {
@@ -799,6 +808,34 @@ func (a Aria2) ForceRemove(gid string) {
 	}
 	// drop the stopped entry so "Finished/Stopped" history does not fill up
 	_, _ = aria2Rpc.RemoveDownloadResult(gid)
+}
+
+// ReferencedTops returns the basenames of top-level download-folder entries
+// backing active/waiting aria2 downloads. The orphan sweeper uses it to
+// avoid touching live downloads. ok=false when aria2 status is unavailable —
+// callers must abort the sweep then (fail-closed), never treat unknown as
+// unreferenced.
+func (a Aria2) ReferencedTops() (tops map[string]bool, ok bool) {
+	tops = map[string]bool{}
+	active, err := aria2Rpc.TellActive()
+	if err != nil {
+		logger.Error("ReferencedTops TellActive failed: %v", err)
+		return nil, false
+	}
+	waiting, err := aria2Rpc.TellWaiting(0, 1000)
+	if err != nil {
+		logger.Error("ReferencedTops TellWaiting failed: %v", err)
+		return nil, false
+	}
+	dl := config.GetDownloadFolder()
+	for _, t := range append(active, waiting...) {
+		for _, f := range t.Files {
+			if top, ok := topEntry(f.Path, dl); ok {
+				tops[filepath.Base(top)] = true
+			}
+		}
+	}
+	return tops, true
 }
 func (a Aria2) PauseAll() {
 	aria2Rpc.PauseAll()

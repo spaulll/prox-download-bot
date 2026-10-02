@@ -331,10 +331,10 @@ Series
 **Goal:** Leftovers never accumulate silently again.
 
 ### Todo
-- [ ] Startup + hourly sweep of the download folder only
-- [ ] Delete `*.aria2` + base files with no referencing aria2 task and older than grace period
-- [ ] Never touch: download root itself, fresh files, recovery-pending completes
-- [ ] Log every decision + commit: `feat: orphan sweeper`
+- [x] Startup + hourly sweep of the download folder only
+- [x] Delete `*.aria2` + base files with no referencing aria2 task and older than grace period
+- [x] Never touch: download root itself, fresh files, recovery-pending completes
+- [x] Log every decision + commit: `feat: orphan sweeper`
 
 ---
 
