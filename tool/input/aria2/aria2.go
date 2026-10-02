@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -728,7 +729,53 @@ func (a Aria2) Unpause(gid string) {
 }
 
 func (a Aria2) ForceRemove(gid string) {
-	aria2Rpc.ForceRemove(gid)
+	// Capture on-disk paths BEFORE removal: after ForceRemove TellStatus
+	// may fail and the paths would be lost, leaving partial files + .aria2
+	// control files behind in the download folder.
+	var targets []string
+	if info, err := aria2Rpc.TellStatus(gid); err == nil {
+		seen := map[string]bool{}
+		dl := filepath.Clean(config.GetDownloadFolder())
+		for _, f := range info.Files {
+			p := filepath.Clean(f.Path)
+			if p == "" || p == "." {
+				continue
+			}
+			var target string
+			if dl != "" && dl != "." && strings.HasPrefix(p, dl+string(filepath.Separator)) {
+				rel, rerr := filepath.Rel(dl, p)
+				if rerr != nil || rel == "." || rel == "" {
+					continue
+				}
+				top := strings.SplitN(rel, string(filepath.Separator), 2)[0]
+				if top == "" {
+					continue
+				}
+				target = filepath.Join(dl, top)
+			} else if p != dl {
+				target = p
+			} else {
+				// safety: never delete the download root itself
+				continue
+			}
+			if !seen[target] {
+				seen[target] = true
+				targets = append(targets, target)
+			}
+		}
+	} else {
+		logger.Error("ForceRemove TellStatus failed for %s: %v", gid, err)
+	}
+	_, _ = aria2Rpc.ForceRemove(gid)
+	for _, t := range targets {
+		if err := os.RemoveAll(t); err != nil {
+			logger.Error("ForceRemove cleanup failed for %s: %v", t, err)
+		}
+		// aria2 control file next to single-file downloads
+		_ = os.Remove(t + ".aria2")
+	}
+	// drop the stopped entry so "Finished/Stopped" history does not fill up
+	_, _ = aria2Rpc.RemoveDownloadResult(gid)
 }
 func (a Aria2) PauseAll() {
 	aria2Rpc.PauseAll()
