@@ -405,6 +405,28 @@ func shortDisplayName(link string) string {
 	return s
 }
 
+// addAria2Link starts an aria2 download and records ownership. Schedules the
+// deferred duplicate check (the real filename arrives after start).
+// Returns the gid on success.
+func addAria2Link(chatID, userID int64, username, link string) (string, bool) {
+	gid, ok := input.ToolApp.Aria2.Download(link)
+	if !ok {
+		return "", false
+	}
+	taskStore.Add(users.Task{
+		GID:    gid,
+		UserID: userID,
+		ChatID: chatID,
+		Link:   link,
+		Name:   shortDisplayName(link),
+		Engine: "aria2",
+		Status: "downloading",
+	})
+	notifyUserAdded(userID, username, link)
+	go dupDeferredCheck(gid)
+	return gid, true
+}
+
 // buildRemovePicker builds the combined remove picker (aria2 active/waiting
 // plus in-progress Telegram fetches) with continuous numbering. Rows are
 // deduplicated by GID (a multi-file torrent lists one row per file but is a
@@ -696,6 +718,71 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 						}
 					}
 				}
+			case "40":
+				// duplicate override: download anyway (owner or admin only)
+				if p := takeDupPending(task[0]); p != nil {
+					if clicker != p.UserID && !isAdminID(clicker) {
+						bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, "⛔ You can only control your own tasks"))
+						break
+					}
+					if gid, ok := addAria2Link(p.ChatID, p.UserID, p.Username, p.Link); ok {
+						dupOverMu.Lock()
+						dupOver[gid] = true
+						dupOverMu.Unlock()
+						bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, i18nLoc.LocText("taskNowResume")))
+						if update.CallbackQuery.Message != nil {
+							edit := tgBotApi.NewEditMessageText(update.CallbackQuery.Message.Chat.ID,
+								update.CallbackQuery.Message.MessageID,
+								fmt.Sprintf(i18nLoc.LocText("dupConfirmed"), shortDisplayName(p.Link)))
+							bot.Request(edit)
+							inflightRemoveChat(update.CallbackQuery.Message.Chat.ID, update.CallbackQuery.Message.MessageID)
+						}
+					} else {
+						bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, i18nLoc.LocText("unknownLink")))
+					}
+				}
+			case "41":
+				// duplicate override declined: forget the pending link
+				if p := takeDupPending(task[0]); p != nil {
+					if clicker != p.UserID && !isAdminID(clicker) {
+						bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, "⛔ You can only control your own tasks"))
+						break
+					}
+					bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, i18nLoc.LocText("dupCancelled")))
+					if update.CallbackQuery.Message != nil {
+						edit := tgBotApi.NewEditMessageText(update.CallbackQuery.Message.Chat.ID,
+							update.CallbackQuery.Message.MessageID, i18nLoc.LocText("dupCancelled"))
+						bot.Request(edit)
+						inflightRemoveChat(update.CallbackQuery.Message.Chat.ID, update.CallbackQuery.Message.MessageID)
+					}
+				}
+			case "42":
+				// deferred duplicate: keep downloading (owner or admin only)
+				if !canControlGid(clicker, task[0]) {
+					bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, "⛔ You can only control your own tasks"))
+					break
+				}
+				input.UnpauseTask(task[0])
+				bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, i18nLoc.LocText("taskNowResume")))
+				if update.CallbackQuery.Message != nil {
+					bot.Request(tgBotApi.NewDeleteMessage(update.CallbackQuery.Message.Chat.ID,
+						update.CallbackQuery.Message.MessageID))
+					inflightRemoveChat(update.CallbackQuery.Message.Chat.ID, update.CallbackQuery.Message.MessageID)
+				}
+			case "43":
+				// deferred duplicate: stop and delete (owner or admin only)
+				if !canControlGid(clicker, task[0]) {
+					bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, "⛔ You can only control your own tasks"))
+					break
+				}
+				rememberRealName(task[0])
+				input.ForceRemoveTask(task[0])
+				bot.Request(tgBotApi.NewCallback(update.CallbackQuery.ID, i18nLoc.LocText("taskNowRemove")))
+				if update.CallbackQuery.Message != nil {
+					bot.Request(tgBotApi.NewDeleteMessage(update.CallbackQuery.Message.Chat.ID,
+						update.CallbackQuery.Message.MessageID))
+					inflightRemoveChat(update.CallbackQuery.Message.Chat.ID, update.CallbackQuery.Message.MessageID)
+				}
 			}
 
 			//fmt.Print(update)
@@ -859,19 +946,21 @@ func Aria2Bot(BotKey string, wg *sync.WaitGroup) {
 							msg.Text = refusal
 							break
 						}
-						gid, ok := input.ToolApp.Aria2.Download(text)
-						if ok {
-							taskStore.Add(users.Task{
-								GID:    gid,
-								UserID: senderID,
-								ChatID: update.Message.Chat.ID,
-								Link:   text,
-								Name:   shortDisplayName(text),
-								Engine: "aria2",
-								Status: "downloading",
-							})
-							notifyUserAdded(senderID, senderUsername, text)
-						} else {
+						if dup := findActiveDownload(text); dup != nil {
+							name := dup.Name
+							if name == "" {
+								name = dup.Link
+							}
+							msg.Text = fmt.Sprintf(i18nLoc.LocText("dupDownloading"), name)
+							break
+						}
+						if hit := findLibraryDuplicate(shortDisplayName(text)); hit != nil {
+							key := rememberDupPending(text, senderID, update.Message.Chat.ID, senderUsername)
+							msg.Text = fmt.Sprintf(i18nLoc.LocText("dupInLibrary"), hit.Detail)
+							msg.ReplyMarkup = dupConfirmMarkup(key)
+							break
+						}
+						if _, ok := addAria2Link(update.Message.Chat.ID, senderID, senderUsername, text); !ok {
 							msg.Text = i18nLoc.LocText("unknownLink")
 						}
 					default:
