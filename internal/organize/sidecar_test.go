@@ -142,6 +142,8 @@ func TestCleanMovieFolderName(t *testing.T) {
 		"Show.2024.Uncut.1080p.BluRay.mkv":           "Show (2024)",
 		// ...but genuine title words before the year survive
 		"The.Final.Cut.2004.1080p.BluRay.mkv": "The Final Cut (2004)",
+		// percent-encoded names decode before cleaning
+		"Sample%20Film%202025%201080p%20x264.mkv": "Sample Film (2025)",
 	}
 	for in, want := range cases {
 		if got := CleanMovieFolderName(in); got != want {

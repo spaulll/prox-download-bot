@@ -6,6 +6,7 @@
 package organize
 
 import (
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -17,8 +18,6 @@ var (
 	yearBareRe    = regexp.MustCompile(`\b[0-9]{4}\b`)
 	seasonEpCut   = regexp.MustCompile(`(?i)\bs[0-9]{1,2}[._ -]?e[0-9]{1,3}\b.*`)
 	seasonPackCut = regexp.MustCompile(`(?i)\bs[0-9]{1,2}\b.*`)
-	seasonOnlyRe  = regexp.MustCompile(`(?i)\bs[0-9]{1,2}\b`)
-	xeCut         = regexp.MustCompile(`(?i)\b[0-9]{1,2}x[0-9]{1,3}\b.*`)
 	tagCut        = regexp.MustCompile(`(?i)\b(720p|1080p|2160p|480p|360p|4k|uhd|bluray|blu-ray|bdrip|bd|brrip|webrip|web-dl|webdl|web|hdtv|dvdrip|dvdscr|x264|x265|h\.?264|h\.?265|hevc|avc|aac|ac3|eac3|dts|dtshd|truehd|atmos|hdr|hdr10|dolby|vision|10bit|8bit|remux|extended|repack|proper|remastered|unrated|dual|audio|sub|subs|msubs|esubs|subbed|dubbed|hindi|korean|japanese|chinese|taiwanese|mandarin|english|RG|org|netflix|amzn|nf|dsnp|hulu|hmax|max|pc|rip)\b.*`)
 	bracketRe     = regexp.MustCompile(`\[[^\]]*\]`)
 	parenRe       = regexp.MustCompile(`\([^)]*\)`)
@@ -29,11 +28,63 @@ var (
 	// title words like "The Final Cut (2004)" are never stripped.
 	editionCut = regexp.MustCompile(`(?i)\b(imax|uncut|criterion|open[\s._-]*matte|hfr|[46]0fps|120fps|3d|directors?(?:['’]s)?[\s._-]*cut|theatrical(?:[\s._-]*cut)?|final[\s._-]*cut|ultimate(?:[\s._-]*cut|[\s._-]*edition)?|special[\s._-]*edition|extended[\s._-]*edition)\b.*`)
 	spaceRe       = regexp.MustCompile(`\s+`)
-	episodeRe     = regexp.MustCompile(`(?i)\b(s[0-9]{1,2}[._ -]?e[0-9]{1,3}|[0-9]{1,2}x[0-9]{1,3}|e[0-9]{1,3}(?:\b|\.[a-z0-9]{2,4}$))`)
 	seRe          = regexp.MustCompile(`(?i)\bs([0-9]{1,2})[._ -]?e[0-9]{1,3}\b`)
-	xRe           = regexp.MustCompile(`(?i)\b([0-9]{1,2})x[0-9]{1,3}\b`)
 	eOnlyRe       = regexp.MustCompile(`(?i)(?:\b|\s)e([0-9]{1,3})\b`)
+	// xFullRe captures season + episode of the NxM form so codec tags
+	// like x264/x265 can be excluded (see isCodecXMatch).
+	xFullRe = regexp.MustCompile(`(?i)\b([0-9]{1,2})x([0-9]{1,3})\b`)
+	standaloneSRe = regexp.MustCompile(`(?i)\bs([0-9]{1,2})\b`)
 )
+
+// decodeName URL-decodes percent-encoded names ("%20" -> " "). Download
+// backends sometimes leave HTTP-encoded names on disk
+// ("Sample%20Film%202025...%20x264..."), where the trailing "20" of
+// "%20" glues to the codec ("20x264") and fakes an episode tag.
+// PathUnescape fails on stray "%" (e.g. "100% Wolf"), so fall back to a
+// minimal %20 -> space replacement that never destroys a literal "%".
+func decodeName(s string) string {
+	if !strings.Contains(s, "%") {
+		return s
+	}
+	if d, err := url.PathUnescape(s); err == nil {
+		return d
+	}
+	s = strings.ReplaceAll(s, "%20", " ")
+	// hex escapes with letters (case-insensitive) for common separators
+	s = strings.ReplaceAll(s, "%2e", ".")
+	s = strings.ReplaceAll(s, "%2E", ".")
+	s = strings.ReplaceAll(s, "%2d", "-")
+	s = strings.ReplaceAll(s, "%2D", "-")
+	s = strings.ReplaceAll(s, "%5b", "[")
+	s = strings.ReplaceAll(s, "%5B", "[")
+	s = strings.ReplaceAll(s, "%5d", "]")
+	s = strings.ReplaceAll(s, "%5D", "]")
+	return s
+}
+
+// isCodecXMatch reports whether an NxM match is really a video codec tag
+// (x264/x265). A glued "%20x264" decodes to " x264" and never reaches here,
+// but "Movie.1x264" style names must still not count as season 1 episode 264.
+func isCodecXMatch(season, episode string) bool {
+	if len(season) == 0 || len(episode) == 0 {
+		return false
+	}
+	return episode == "264" || episode == "265"
+}
+
+// firstNonCodecX returns the start index of the first non-codec NxM marker,
+// or -1 when there is none.
+func firstNonCodecX(s string) int {
+	locs := xFullRe.FindAllStringSubmatchIndex(s, -1)
+	for _, loc := range locs {
+		season := s[loc[2]:loc[3]]
+		episode := s[loc[4]:loc[5]]
+		if !isCodecXMatch(season, episode) {
+			return loc[0]
+		}
+	}
+	return -1
+}
 
 // SanitizeFolderName removes characters illegal in Windows/NTFS/Samba folder
 // names. "Show: Subtitle" becomes "Show - Subtitle". Also strips * ? " < > |
@@ -70,6 +121,7 @@ func SanitizeFileName(name string) string {
 // NormalizeName lowercases, strips extension/punctuation/year/resolution/tags
 // and collapses spaces. Used for matching both file names and folder names.
 func NormalizeName(name string) string {
+	name = decodeName(name)
 	s := strings.ToLower(strings.TrimSpace(name))
 	s = extRe.ReplaceAllString(s, "")
 	s = strings.NewReplacer(".", " ", "_", " ", "-", " ").Replace(s)
@@ -78,8 +130,10 @@ func NormalizeName(name string) string {
 	// cut everything from the episode/season tag onward
 	if loc := seasonEpCut.FindStringIndex(s); loc != nil {
 		s = s[:loc[0]]
-	} else if loc := xeCut.FindStringIndex(s); loc != nil {
-		s = s[:loc[0]]
+	} else if idx := firstNonCodecX(s); idx != -1 {
+		// NxM marker that is not a glued codec tag (x264/x265 excluded
+		// inside firstNonCodecX); cut from the marker onward like xeCut.
+		s = s[:idx]
 	} else if loc := seasonPackCut.FindStringIndex(s); loc != nil {
 		// season-only tag (season pack): cut it too, but keep text if the
 		// tag is the whole name
@@ -105,38 +159,56 @@ func TitleCase(s string) string {
 }
 
 // IsEpisode reports whether the file name contains a clear episode tag.
-// A bare year like "2019" is NOT an episode tag.
+// A bare year like "2019" is NOT an episode tag. Codec tags x264/x265 are
+// NOT episode tags (1x264 would otherwise fake S01E264), and percent-encoded
+// names are decoded first so "%20x264" never fakes S20E264.
 func IsEpisode(filename string) bool {
-	return episodeRe.MatchString(filename)
+	f := decodeName(filename)
+	if seRe.MatchString(f) {
+		return true
+	}
+	for _, m := range xFullRe.FindAllStringSubmatch(f, -1) {
+		if !isCodecXMatch(m[1], m[2]) {
+			return true
+		}
+	}
+	return eOnlyRe.MatchString(f)
 }
 
 // ExtractSeason returns the season number (no leading zero) from patterns
 // like S04E06, S4E6, 4x06, s04.e06. Returns 0 if no season found.
+// x264/x265 codec tags never count as a season.
 func ExtractSeason(filename string) int {
-	lower := strings.ToLower(filename)
+	lower := strings.ToLower(decodeName(filename))
 	if m := seRe.FindStringSubmatch(lower); m != nil {
 		return parseNum(m[1])
 	}
-	if m := xRe.FindStringSubmatch(lower); m != nil {
+	for _, m := range xFullRe.FindAllStringSubmatch(lower, -1) {
+		if isCodecXMatch(m[1], m[2]) {
+			continue
+		}
 		return parseNum(m[1])
 	}
 	// s01 standalone (season pack folder or file without episode)
-	if m := regexp.MustCompile(`(?i)\bs([0-9]{1,2})\b`).FindStringSubmatch(lower); m != nil {
+	if m := standaloneSRe.FindStringSubmatch(lower); m != nil {
 		return parseNum(m[1])
 	}
 	return 0
 }
 
 // ExtractEpisode returns the episode number from the file name, 0 if none.
+// x264/x265 codec tags never count as an episode.
 func ExtractEpisode(filename string) int {
-	lower := strings.ToLower(filename)
+	lower := strings.ToLower(decodeName(filename))
 	if m := seRe.FindStringSubmatch(lower); m != nil {
 		idx := strings.Index(strings.ToLower(m[0]), "e")
 		return parseNum(m[0][idx+1:])
 	}
-	if m := xRe.FindStringSubmatch(lower); m != nil {
-		idx := strings.Index(strings.ToLower(m[0]), "x")
-		return parseNum(m[0][idx+1:])
+	for _, m := range xFullRe.FindAllStringSubmatch(lower, -1) {
+		if isCodecXMatch(m[1], m[2]) {
+			continue
+		}
+		return parseNum(m[2])
 	}
 	if m := eOnlyRe.FindStringSubmatch(lower); m != nil {
 		return parseNum(m[1])
@@ -148,25 +220,33 @@ func ExtractEpisode(filename string) int {
 // "Some.Show.S02E04.1080p.x264.Hindi...Msubs.RG.mkv"
 // becomes "Some.Show.S02E04.mkv"
 func CleanEpisodeFileName(filename string) string {
+	filename = decodeName(filename)
 	ext := strings.ToLower(filepath.Ext(filename))
 	base := filename[:len(filename)-len(ext)]
 
-	// find the earliest episode marker and keep up to and including it
-	markers := []struct {
-		re *regexp.Regexp
-	}{
-		{regexp.MustCompile(`(?i)\bs[0-9]{1,2}[._ -]?e[0-9]{1,3}\b`)},
-		{regexp.MustCompile(`(?i)\b[0-9]{1,2}x[0-9]{1,3}\b`)},
-		{regexp.MustCompile(`(?i)(?:\b|\s)E[0-9]{1,3}\b`)},
-	}
+	// find the earliest episode marker and keep up to and including it;
+	// x264/x265 codec tags are skipped so they never fake an NxM marker.
 	bestEnd := -1
 	bestMarker := ""
-	for _, m := range markers {
-		if loc := m.re.FindStringIndex(base); loc != nil {
-			if bestEnd == -1 || loc[1] < bestEnd {
-				bestEnd = loc[1]
-				bestMarker = m.re.FindString(base)
-			}
+	if loc := regexp.MustCompile(`(?i)\bs[0-9]{1,2}[._ -]?e[0-9]{1,3}\b`).FindStringIndex(base); loc != nil {
+		bestEnd = loc[1]
+		bestMarker = base[loc[0]:loc[1]]
+	}
+	for _, loc := range xFullRe.FindAllStringIndex(base, -1) {
+		m := xFullRe.FindStringSubmatch(base[loc[0]:loc[1]])
+		if m != nil && isCodecXMatch(m[1], m[2]) {
+			continue
+		}
+		if bestEnd == -1 || loc[1] < bestEnd {
+			bestEnd = loc[1]
+			bestMarker = base[loc[0]:loc[1]]
+		}
+		break // x markers are left-to-right; first non-codec is earliest
+	}
+	if loc := regexp.MustCompile(`(?i)(?:\b|\s)E[0-9]{1,3}\b`).FindStringIndex(base); loc != nil {
+		if bestEnd == -1 || loc[1] < bestEnd {
+			bestEnd = loc[1]
+			bestMarker = base[loc[0]:loc[1]]
 		}
 	}
 	if bestEnd == -1 {
@@ -197,7 +277,7 @@ func CleanEpisodeFileName(filename string) string {
 // "Example.Movie.2024.1080p.WEBRip.x264.mp4" both become "Example Movie (2024)".
 // Returns "" when no usable title remains.
 func CleanMovieFolderName(name string) string {
-	s := strings.TrimSpace(name)
+	s := strings.TrimSpace(decodeName(name))
 	// strip a real file extension only (tag brackets like "[GRP]" must
 	// not count as one)
 	if ext := filepath.Ext(s); ext != "" {
@@ -252,6 +332,7 @@ func CleanMovieFileName(filename string) string {
 // archive/file name: "Mousetrap.S01.480p.x264...Msubs.RG"
 // becomes "Mousetrap".
 func CleanSeasonPackName(name string) string {
+	name = decodeName(name)
 	s := strings.NewReplacer(".", " ", "_", " ").Replace(name)
 	s = regexp.MustCompile(`(?i)\bS[0-9]{1,2}(E[0-9]{1,3})?\b.*`).ReplaceAllString(s, "")
 	s = tagCut.ReplaceAllString(s, "")

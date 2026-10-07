@@ -14,6 +14,7 @@ func TestNormalizeName(t *testing.T) {
 		"One.Piece.1000.1080p.mkv":                                                       "one piece",
 		"Mousetrap.S01.480p.x264.Hindi.Korean.English.Msubs.RG":               "mousetrap",
 		"Show.Name.2020.WEB-DL.mkv":                                                      "show name",
+		"Sample%20Film%202025%201080p%20x264.mkv": "sample film",
 	}
 	for in, want := range cases {
 		if got := NormalizeName(in); got != want {
@@ -59,6 +60,12 @@ func TestIsEpisode(t *testing.T) {
 	falseCases := []string{
 		"The.Legend.of.Hei.2019.1080p.mkv", "Movie.2020.mkv", "Inception.mkv",
 		"Blade.Runner.2049.mkv", "1917.2019.mkv",
+		// codec must never fake an episode: "%20" + "x264" glued to "20x264"
+		"Sample%20Film%202025%201080p%20x264.mkv",
+		"Sample Film 2025 1080p x264.mkv",
+		"Sample.Film.2025.1080p.x264.mkv",
+		"Movie.1x264.mkv",
+		"Movie.2x265.mkv",
 	}
 	for _, c := range trueCases {
 		if !IsEpisode(c) {
@@ -83,6 +90,8 @@ func TestExtractSeason(t *testing.T) {
 		"Show.S12E03.mkv":      12,
 		"The.Matrix.1999.mkv":  0,
 		"Random.Show.mkv":      0,
+		"Sample%20Film%202025%201080p%20x264.mkv": 0,
+		"Movie.1x264.mkv": 0,
 	}
 	for in, want := range cases {
 		if got := ExtractSeason(in); got != want {
