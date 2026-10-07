@@ -129,9 +129,26 @@ Supported platforms: **Linux `amd64` and `arm64`** (prebuilt binaries and CI).
    | `DownloadBot-linux-amd64` | Linux x86-64 (most VPS/NAS) |
    | `DownloadBot-linux-arm64` | Linux ARM 64-bit (Raspberry Pi 4/5 64-bit OS, ARM VPS) |
 
-2. Install runtime tools, start aria2, write `config.json` — follow
-   [Full setup](#full-setup-step-by-step).
-3. Run:
+2. Install the runtime dependencies (the binary shells out to these —
+   it fails without them):
+
+    ```bash
+    sudo apt update
+    sudo apt install -y aria2 ffmpeg unzip p7zip-full
+    sudo apt install -y unrar || true   # non-free/multiverse; skip if unavailable
+    # yt-dlp (standalone release; the apt package is outdated):
+    # amd64:
+    sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux \
+      -o /usr/local/bin/yt-dlp
+    # arm64 (instead of the above):
+    # sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux_aarch64 \
+    #   -o /usr/local/bin/yt-dlp
+    sudo chmod +x /usr/local/bin/yt-dlp
+    ```
+
+3. Start aria2 and write `config.json` — follow
+   [Full setup](#full-setup-step-by-step) steps 2–6.
+4. Run:
 
    ```bash
    chmod +x DownloadBot-linux-amd64
