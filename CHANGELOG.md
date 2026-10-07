@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## v0.6.1 - 2026-10-07
+
+### Fixed
+- Percent-encoded filenames (e.g. `%20` for spaces) are URL-decoded before
+  media routing: previously the trailing `20` of an encoded space could glue
+  to the `x264`/`x265` codec tag, faking an episode marker and mis-sorting a
+  movie into `Series/.../Season 20`. Codec tags never count as episode
+  markers now, and cleaned movie names carry no percent-escapes.
+
 ## v0.6.0 - 2026-10-03
 
 ### Added
